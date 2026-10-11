@@ -4,11 +4,13 @@ Instructions for AI coding agents working in this repository. Humans use `README
 
 ## What this is
 
-Maine is a local-first SSH client for macOS (Swift 6, SwiftUI, macOS 14+). Single Swift package at `apps/macos` with one dependency (SwiftTerm). No backend, no sync, no telemetry. Shared cross-client contract lives in `packages/schema`, not shared code.
+Maine is a local-first SSH client for macOS (Swift 6, SwiftUI, macOS 14+), Windows (C#, WPF, .NET 8) and Android (Kotlin, Compose, SDK 28+). Swift package at `apps/macos` with one dependency (SwiftTerm); .NET solution at `apps/windows` (`Maine.Core` has no UI dependencies); Gradle module at `apps/android` (sshj for SSH, Compose for UI). No backend, no sync, no telemetry. Shared cross-client contract lives in `packages/schema`, not shared code — except the vault envelope, which every client implements byte-for-byte so the file is portable.
 
 ```
 maine/
 ├── apps/macos/     The app: Sources/Maine, Tests/MaineTests, scripts/, Resources/
+├── apps/windows/   WPF + C# client: src/Maine.Core, src/Maine.App, tests/
+├── apps/android/   Kotlin + Compose client: app/src/{main,test}, tools/, README.md
 ├── packages/schema/ Versioned JSON config format + Python validator
 ├── docs/           architecture.md, macos-design.md, images/
 └── README.md
@@ -29,6 +31,21 @@ build/Maine.app/Contents/MacOS/Maine --debug  # release build with debug logging
 
 Tests run a real child process through a PTY and need a normal (non-headless) user session. Xcode 16+ must be selected via `xcode-select`; Command Line Tools alone cannot compile the SwiftUI views.
 
+Run Windows commands from `apps/windows` (user-local .NET 8 SDK works; `Maine.App` needs Windows to run):
+
+```sh
+dotnet build src/Maine.Core/Maine.Core.csproj
+dotnet test tests/Maine.Core.Tests/Maine.Core.Tests.csproj   # 57 tests, incl. Swift-produced vault fixture
+```
+
+Run Android commands from `apps/android` (JDK 17+, Android SDK with platform 36; JVM unit tests need no emulator):
+
+```sh
+./gradlew :app:testDebugUnitTest              # JVM unit tests (48 tests)
+./gradlew :app:assembleDebug                  # debug APK
+swift tools/make-golden-vault.swift <password> app/src/test/resources/vault-golden-v2.json
+```
+
 ## Architecture map
 
 | Area | Files | Role |
@@ -40,6 +57,25 @@ Tests run a real child process through a PTY and need a normal (non-headless) us
 | Sessions | `Sources/Maine/Sessions/SessionManager.swift`, `TerminalSession.swift` | Open sessions keyed by session UUID; terminal NSView owned by the session, never reparented |
 | Views | `Sources/Maine/Views/` | Sidebar-only navigation; `DesktopMetrics.swift` is the single spacing vocabulary |
 | Tests | `Tests/MaineTests/` | Geometry, lifecycle, encryption/migration, persistence regressions |
+
+Windows (`apps/windows`, C# + WPF, .NET 8):
+
+| Area | Files | Role |
+| --- | --- | --- |
+| Core (no UI) | `src/Maine.Core/` | Host model/validation, versioned format, vault v2 (byte-compatible), ssh command + config reader, snapshots |
+| App | `src/Maine.App/` | Sidebar, ConPTY sessions, WebView2 terminals, askpass helper, DPAPI key store |
+| Tests | `tests/Maine.Core.Tests/` | Validation, format refusal, ssh args, config reader, vault roundtrip + Swift-generated fixture |
+
+Android (`apps/android`, Kotlin + Compose, minSdk 28):
+
+| Area | Files | Role |
+| --- | --- | --- |
+| Entry, state | `ui/MainActivity.kt`, `ui/MaineViewModel.kt` | Vault gate on every launch; window-level state shared by screens |
+| Hosts | `model/Host*.kt` | Host model, validation, versioned format (schema parity) |
+| Vault | `vault/VaultStore.kt` | `passwords.maine` v2, byte-compatible with macOS; key in memory only |
+| SSH | `ssh/SshTarget.kt`, `ssh/SshConfigFile.kt` | Display args + dial params; read-only ssh config |
+| Sessions | `session/SessionManager.kt`, `session/TerminalSession.kt` | Open sessions keyed by session UUID; stub scrollback terminal |
+| Tests | `app/src/test/` | Validation, format refusal, ssh args, config reader, vault roundtrip + Swift-generated golden fixture |
 
 ## Invariants — do not break these
 

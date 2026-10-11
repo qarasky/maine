@@ -13,6 +13,12 @@ TestResults/
 Maine.exe.WebView2/
 publish/
 
+# Android
+local.properties
+.gradle/
+*.jks
+*.keystore
+
 # Swift Package Manager
 .swiftpm/
 

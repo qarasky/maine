@@ -16,7 +16,7 @@ storage story.
 | macOS    | `~/Library/Application Support/Maine/hosts.json`     |
 | Linux    | `$XDG_CONFIG_HOME/maine/hosts.json` (planned)        |
 | Windows  | `%APPDATA%\Maine\hosts.json` (planned)               |
-| Android  | application-private storage (planned)                |
+| Android  | app-private `passwords.maine` vault (no plaintext file) |
 
 Each client owns its own file. Maine never syncs between machines.
 

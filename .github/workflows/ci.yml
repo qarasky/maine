@@ -70,3 +70,19 @@ jobs:
       - name: Test Core on Windows (ACL + DPAPI-adjacent paths)
         run: dotnet test tests/Maine.Core.Tests/Maine.Core.Tests.csproj --nologo --no-build
         working-directory: apps/windows
+
+  android:
+    name: Android app (Kotlin unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: Install platform + build tools
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Unit tests (JVM, no emulator; incl. Swift-generated golden vault)
+        run: ./gradlew :app:testDebugUnitTest --console=plain
+        working-directory: apps/android

@@ -105,14 +105,15 @@ Repository layout:
 maine/
 ├── apps/
 │   ├── macos/              Swift + SwiftUI application
-│   └── windows/            WPF + C# application (.NET 8)
+│   ├── windows/            WPF + C# application (.NET 8)
+│   └── android/            Kotlin + Compose application (scaffold pass)
 ├── packages/
 │   └── schema/           Versioned JSON configuration format + validator
 ├── docs/                 architecture.md, macos-design.md, images/
 └── README.md
 ```
 
-Directories for Linux and Android are added when those clients are built, not before. The shared contract between clients is the configuration format, not shared code: see [`packages/schema/README.md`](packages/schema/README.md). The macOS and Windows vault files are additionally byte-compatible: a `passwords.maine` file copied between machines opens with the same master password (proven by `swift-vault-v2.json` in the Windows test fixtures).
+The directory for Linux is added when that client is built, not before. The shared contract between clients is the configuration format, not shared code: see [`packages/schema/README.md`](packages/schema/README.md). The encrypted vault envelope is additionally implemented byte-for-byte on every client, so a `passwords.maine` file copied between machines unlocks with the same master password (proven by `swift-vault-v2.json` in the Windows test fixtures and `vault-golden-v2.json` in the Android tests).
 
 Regenerate the M monogram icon with `swift scripts/render-mark.swift monogram <master.png>`, then rebuild the `.iconset`/`.icns` with `sips` + `iconutil` as documented in that script's header. `scripts/render-icon.swift` (the `>_` prompt mark) is kept for possible future use.
 
@@ -130,7 +131,8 @@ The macOS application is the first client, and it is at version 1.0.0:
 | Unified encrypted hosts/password vault | done |
 | Saved passwords, portable encrypted vault, master-password unlock | done |
 | Windows client (WPF + C#, portable vault, ConPTY sessions) | in progress |
-| Linux, Android clients | not started |
+| Android client (scaffold: vault parity, host CRUD, stub terminal) | in progress |
+| Linux client | not started |
 | Sync, accounts, key management | not planned |
 
 ## License
