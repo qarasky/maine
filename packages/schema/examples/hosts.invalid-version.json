@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 2,
+  "hosts": [
+    {
+      "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+      "name": "Web server",
+      "hostname": "203.0.113.10",
+      "port": 22,
+      "username": ""
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maine.app/schema/hosts-1.schema.json",
+  "title": "Maine Host List",
+  "description": "Version 1 of the Maine saved-host list. This is the portable configuration format that every Maine client (macOS today; Windows, Linux and Android in future) reads and writes. The file lives next to the client's own data, is never synced by Maine, and never contains passwords or private keys.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "hosts"],
+  "properties": {
+    "schemaVersion": {
+      "description": "Version of the configuration format. Always 1 for this revision of the schema. Clients MUST refuse files with a higher version than they implement.",
+      "type": "integer",
+      "const": 1
+    },
+    "hosts": {
+      "description": "The saved hosts, in the order the user arranged them. Clients MUST NOT limit the number of entries.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/host" }
+    }
+  },
+  "$defs": {
+    "host": {
+      "title": "Host",
+      "description": "A single saved SSH host. Every field is user-editable except id.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "hostname", "port", "username"],
+      "properties": {
+        "id": {
+          "description": "Stable, client-generated identifier. A lowercase UUID string is recommended. Clients MUST NOT derive meaning from it and MUST NOT change it when other fields are edited.",
+          "type": "string",
+          "format": "uuid",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "name": {
+          "description": "The label shown in the host list.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "hostname": {
+          "description": "What is passed to OpenSSH as the connection target: an IP address, a DNS name, or a Host alias defined in the user's own ~/.ssh/config. No whitespace, no leading '-'.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[^\\s]+$"
+        },
+        "port": {
+          "description": "TCP port to connect to. The value 22 means 'default'; clients SHOULD omit the ssh -p flag in that case so a matching ~/.ssh/config stanza can decide the real port.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 22
+        },
+        "username": {
+          "description": "Remote user name. The empty string means 'not specified'; clients SHOULD omit the ssh -l flag in that case so OpenSSH can take the user from ~/.ssh/config, the key, or the local user name.",
+          "type": "string",
+          "maxLength": 128
+        }
+      }
+    }
+  }
+}
