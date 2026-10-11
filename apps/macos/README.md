@@ -53,7 +53,7 @@ apps/macos/
 ├── Package.swift            SwiftPM manifest
 ├── Package.resolved         Pinned dependency versions
 ├── Resources/Info.plist     Bundle metadata used by scripts/build-app.sh
-├── scripts/                 build-app.sh, install.sh
+├── scripts/                 build-app.sh, install.sh, render-*.swift (icon pipeline)
 ├── Sources/Maine/
 │   ├── App/                 @main entry point, menu commands, window state
 │   ├── Models/              Host, the versioned configuration, the store
@@ -82,8 +82,7 @@ together and why they are arranged that way.
 
 | What | Where |
 | ---- | ----- |
-| Saved hosts | `~/Library/Application Support/Maine/hosts.json` |
-| Encrypted passwords | `~/Library/Application Support/Maine/passwords.maine` |
+| Saved hosts, passwords, session snapshots | `~/Library/Application Support/Maine/passwords.maine` (encrypted) |
 | Remembered local vault key | macOS login Keychain |
 | Opt-in debug logs | `~/Library/Logs/Maine/debug.jsonl` and `debug.previous.jsonl` |
 | Keys, known hosts, ssh options | `~/.ssh`, untouched by Maine |
