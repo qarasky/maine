@@ -1,0 +1,39 @@
+<Window x:Class="Maine.App.HostEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Host" Width="420" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+  <StackPanel Margin="16">
+    <TextBlock Text="Name" Margin="0,0,0,2" />
+    <TextBox x:Name="NameBox" Margin="0,0,0,8" />
+    <TextBlock Text="Hostname or IP" Margin="0,0,0,2" />
+    <TextBox x:Name="HostnameBox" Margin="0,0,0,8" />
+    <Grid Margin="0,0,0,8">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="12" />
+        <ColumnDefinition Width="120" />
+      </Grid.ColumnDefinitions>
+      <StackPanel Grid.Column="0">
+        <TextBlock Text="Username (blank lets ssh decide)" Margin="0,0,0,2" />
+        <TextBox x:Name="UsernameBox" />
+      </StackPanel>
+      <StackPanel Grid.Column="2">
+        <TextBlock Text="Port" Margin="0,0,0,2" />
+        <TextBox x:Name="PortBox" />
+      </StackPanel>
+    </Grid>
+    <TextBlock Text="Password (saved in the encrypted vault)" Margin="0,0,0,2" />
+    <PasswordBox x:Name="PasswordBox" Margin="0,0,0,4" />
+    <TextBlock Text="Leave the password blank to let OpenSSH prompt inside the terminal."
+               Opacity="0.6" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8" />
+    <TextBlock x:Name="KnownHosts" Opacity="0.7" FontSize="11" TextWrapping="Wrap"
+               Margin="0,0,0,8" />
+    <TextBlock x:Name="ErrorText" Foreground="DarkRed" TextWrapping="Wrap"
+               Margin="0,0,0,8" Visibility="Collapsed" />
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+      <Button Content="Cancel" Width="80" Margin="0,0,8,0" IsCancel="True" />
+      <Button Content="Save" Width="80" IsDefault="True" Click="OnSave" />
+    </StackPanel>
+  </StackPanel>
+</Window>

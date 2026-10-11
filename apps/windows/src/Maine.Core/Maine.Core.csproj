@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12</LangVersion>
+    <RootNamespace>Maine.Core</RootNamespace>
+    <AssemblyName>Maine.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- File ACLs for the vault on Windows. All use is guarded by
+         OperatingSystem.IsWindows(); Unix targets use UnixFileMode. -->
+    <PackageReference Include="System.IO.FileSystem.AccessControl" Version="5.0.0" />
+  </ItemGroup>
+
+</Project>

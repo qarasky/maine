@@ -4,6 +4,15 @@ build/
 *.dSYM/
 *.o
 
+# .NET / Windows
+[Bb]in/
+[Oo]bj/
+.vs/
+TestResults/
+*.user
+Maine.exe.WebView2/
+publish/
+
 # Swift Package Manager
 .swiftpm/
 

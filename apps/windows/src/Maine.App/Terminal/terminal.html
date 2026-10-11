@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Maine terminal</title>
+<link rel="stylesheet" href="./lib/xterm.css">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #1e1e1e; }
+  #terminal { position: absolute; inset: 8px; }
+</style>
+</head>
+<body>
+<div id="terminal"></div>
+<script src="./lib/xterm.js"></script>
+<script src="./lib/xterm-addon-fit.js"></script>
+<script>
+(function () {
+  const term = new Terminal({
+    allowProposedApi: true,
+    convertEol: false,
+    cursorBlink: true,
+    fontFamily: 'Cascadia Mono, Consolas, monospace',
+    fontSize: 13,
+    theme: { background: '#1e1e1e', foreground: '#d4d4d4' },
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(document.getElementById('terminal'));
+  fit.fit();
+  term.focus();
+
+  function post(message) {
+    if (window.chrome && window.chrome.webview) {
+      window.chrome.webview.postMessage(message);
+    }
+  }
+
+  function b64ToBytes(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  // PTY output from .NET. The terminal owns its screen: switching sessions
+  // shows a different WebView, so scrollback is never reparented.
+  term.onData(data => {
+    const bytes = new TextEncoder().encode(data);
+    let bin = '';
+    bytes.forEach(b => bin += String.fromCharCode(b));
+    post({ type: 'input', data: btoa(bin) });
+  });
+
+  function reportSize() {
+    post({ type: 'resize', cols: term.cols, rows: term.rows });
+  }
+
+  new ResizeObserver(() => { fit.fit(); reportSize(); })
+    .observe(document.getElementById('terminal'));
+  term.onResize(reportSize);
+
+  if (window.chrome && window.chrome.webview) {
+    window.chrome.webview.addEventListener('message', event => {
+      const msg = event.data;
+      if (msg.type === 'output') {
+        term.write(b64ToBytes(msg.data));
+      } else if (msg.type === 'restore') {
+        // Scrollback snapshot: renderer only, never sent back to any PTY.
+        term.write(b64ToBytes(msg.data));
+      } else if (msg.type === 'reset') {
+        term.reset();
+        term.clear();
+      }
+    });
+  }
+
+  reportSize();
+})();
+</script>
+</body>
+</html>

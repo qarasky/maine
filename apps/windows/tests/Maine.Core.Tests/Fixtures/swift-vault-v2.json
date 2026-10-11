@@ -1,0 +1,11 @@
+{
+  "id" : "0F8FAD5B-D9CB-469F-A165-70867728950E",
+  "iterations" : 600000,
+  "passwords" : {
+
+  },
+  "payload" : "M03roCMcmwNYfe+bAbpc60ohmAbmemTs4Ylbbn9R+R\/HPqroqoIcXoSQKsXtpsq3\/6XQdg3tO8qelNjyEiQWa0Ji6bdC9aJ6PFxNn9GQyt0Vkc2kSfPvMpPzI1aYFQX11RFVhd8XSx8Cj4ikVtaFH6vcF4LF0FEuld+zfzx+qsP0pjt8piCLg67GKkeqhwg5fAMrxsTn1lThvsSIoBihO8wlw\/Up7KeVxf8KXvzsYQX\/cjNUoRsqBBCezSNiFDHWBKyl08pwSCOxXYuP6FTdXzZzGHvAzR8GK7N8ruTpwgp3fEInO8UbfnSWJvnzFsfdhZaZzb3QMfMMP+bQ+Tr9f51Y5nfVZ1TFu4RJOlI2nIH\/wTx860WiFn5\/b73fwV5S5ASi8XTbdaMb+VPkpmyptcXS3Lvv1FHuCidJDI99wtZSEBdCZGXU79wCwHrlr1zQjoCqtMYkwxADcbl1L\/8ucO97\/TgKcL4Zft9iVZA+GcF5O4FUWkKO6x6KepwpOAoczKTwTg0hPDvIdy9YO4nslHz7yIiaKlPA7NMZCdh9IeaFP6qkgaT8wGD7uBfHwXEpFiPJypRG",
+  "salt" : "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "verification" : "\/kH6V5WhnsX1pw8N6Yj0S0wl4nZr1olA2UR7\/Bud9vpBgbt4tBecBiI9NPnM4RRaxs5E",
+  "version" : 2
+}

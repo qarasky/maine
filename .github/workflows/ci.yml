@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  schema:
+    name: Config format validator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate schema examples (Python 3 stdlib only)
+        run: python3 tools/validate.py
+        working-directory: packages/schema
+
+  macos:
+    name: macOS app (Swift)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select the newest Xcode (SwiftUI macros need Xcode 16+)
+        run: |
+          XCODE="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "Using $XCODE"
+          sudo xcode-select --switch "$XCODE/Contents/Developer"
+          swift --version
+      - name: Build and test
+        run: swift test
+        working-directory: apps/macos
+
+  windows-core:
+    name: Windows core (Core build + tests, any OS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Build Core
+        run: dotnet build src/Maine.Core/Maine.Core.csproj --nologo
+        working-directory: apps/windows
+      - name: Test Core (incl. Swift-produced vault fixture)
+        run: dotnet test tests/Maine.Core.Tests/Maine.Core.Tests.csproj --nologo
+        working-directory: apps/windows
+
+  windows-app:
+    name: Windows app (WPF compile)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Vendor xterm.js for the terminal page
+        run: sh scripts/fetch-xterm.sh
+        working-directory: apps/windows
+        shell: bash
+      - name: Build full solution (Core + tests + WPF app)
+        run: dotnet build Maine.sln --nologo
+        working-directory: apps/windows
+      - name: Test Core on Windows (ACL + DPAPI-adjacent paths)
+        run: dotnet test tests/Maine.Core.Tests/Maine.Core.Tests.csproj --nologo --no-build
+        working-directory: apps/windows

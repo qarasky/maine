@@ -97,19 +97,22 @@ cd packages/schema
 python3 tools/validate.py
 ```
 
+GitHub Actions runs all of this on every push to `main` and every pull request — the schema validator, `swift test`, and the Windows Core build/tests plus the full WPF solution build (see `.github/workflows/ci.yml`).
+
 Repository layout:
 
 ```
 maine/
 ├── apps/
-│   └── macos/            Swift + SwiftUI application (the only client today)
+│   ├── macos/              Swift + SwiftUI application
+│   └── windows/            WPF + C# application (.NET 8)
 ├── packages/
 │   └── schema/           Versioned JSON configuration format + validator
 ├── docs/                 architecture.md, macos-design.md, images/
 └── README.md
 ```
 
-Directories for Windows, Linux and Android are added when those clients are built, not before. The shared contract between clients is the configuration format, not shared code: see [`packages/schema/README.md`](packages/schema/README.md).
+Directories for Linux and Android are added when those clients are built, not before. The shared contract between clients is the configuration format, not shared code: see [`packages/schema/README.md`](packages/schema/README.md). The macOS and Windows vault files are additionally byte-compatible: a `passwords.maine` file copied between machines opens with the same master password (proven by `swift-vault-v2.json` in the Windows test fixtures).
 
 Regenerate the M monogram icon with `swift scripts/render-mark.swift monogram <master.png>`, then rebuild the `.iconset`/`.icns` with `sips` + `iconutil` as documented in that script's header. `scripts/render-icon.swift` (the `>_` prompt mark) is kept for possible future use.
 
@@ -126,7 +129,8 @@ The macOS application is the first client, and it is at version 1.0.0:
 | Error reporting for failed connections | done |
 | Unified encrypted hosts/password vault | done |
 | Saved passwords, portable encrypted vault, master-password unlock | done |
-| Windows, Linux, Android clients | not started |
+| Windows client (WPF + C#, portable vault, ConPTY sessions) | in progress |
+| Linux, Android clients | not started |
 | Sync, accounts, key management | not planned |
 
 ## License

@@ -1,7 +1,9 @@
 # Architecture
 
-Maine is a monorepo with one client so far. This document explains how the
-macOS app is put together and which decisions are load-bearing.
+Maine is a monorepo with two clients so far: macOS (shipped) and Windows (in
+progress). This document explains how the macOS app is put together, which
+decisions are load-bearing, and how the Windows client maps them. The Windows
+layout is documented in [`apps/windows/README.md`](../apps/windows/README.md).
 
 ## Why a monorepo
 
@@ -12,6 +14,7 @@ list. So the repository splits along that line:
 ```
 maine/
 ├── apps/macos/          the macOS client: Swift, SwiftUI, AppKit
+├── apps/windows/        the Windows client: C#, WPF, ConPTY, WebView2 + xterm.js
 ├── packages/schema/     the shared, language-neutral configuration format
 ├── docs/                this document
 └── README.md
@@ -23,8 +26,29 @@ dependency. That is deliberate: a shared Swift package would be useless to an
 Android client, and a shared code layer would need a build system that spans four
 toolchains. The format is the contract.
 
-`apps/windows`, `apps/linux` and `apps/android` are not created yet. Empty
+`apps/linux` and `apps/android` are not created yet. Empty
 placeholders would suggest progress that does not exist.
+
+### The Windows mapping
+
+The Windows client keeps the same architecture and the same byte shapes, with
+platform pieces swapped:
+
+| macOS | Windows |
+| ----- | ------- |
+| `forkpty` + `ssh` child | ConPTY + `ssh.exe` child (`ConPtySession`) |
+| SwiftTerm terminal view | xterm.js in one WebView2 per session, all mounted, one visible |
+| `~/Library/Application Support/Maine/passwords.maine` | `%APPDATA%\Maine\passwords.maine` (user-only ACL instead of `0600`) |
+| Login Keychain session key | DPAPI-protected key file, deleted on lock/quit |
+| `SSH_ASKPASS` = app bundle executable | `SSH_ASKPASS` = `Maine.exe` (same helper protocol) |
+| `~/.ssh/config` | `%USERPROFILE%\.ssh\config` (same reader, same `Include` rules) |
+
+The vault file is byte-compatible across both clients: same PBKDF2-SHA256
+(600,000 iterations), same AES-256-GCM additional data
+(`maine-vault:{version}:{UPPERCASE-UUID}:{base64-salt}:{iterations}`),
+same nonce|ciphertext|tag layout, uppercase UUIDs, dates as seconds since
+1970. `Maine.Core` builds as plain `net8.0` with no UI dependencies so its
+test suite runs on any OS; only `Maine.App` needs Windows.
 
 ## What a connection actually is
 
