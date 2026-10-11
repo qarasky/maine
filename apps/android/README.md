@@ -59,19 +59,31 @@ First run downloads Gradle 8.13 and dependencies (~500 MB).
   cannot do `ssh-ed25519`, which most servers now offer.
   `installSshSecurityProvider()` replaces it with the full provider sshj
   depends on, from `MainActivity` before anything can connect.
-* **Host keys are not checked yet.** `PromiscuousVerifier` accepts whatever
-  answers — the equivalent of `StrictHostKeyChecking=no`. macOS defers to the
-  user's own `ssh`, which pins keys in `known_hosts`; Android has no such file,
-  so pinning needs a vault-backed fingerprint field on the host.
+* **Host keys are pinned on first use.** `PinnedHostKeyVerifier` remembers a
+  host's key the first time it is seen and refuses any later key that does not
+  match, reporting both fingerprints so the change can be checked. macOS defers
+  to the user's own `ssh` and its `known_hosts`; this is the same policy kept in
+  app-private storage (`files/known_hosts` — public fingerprints only, so it
+  needs no encryption). It is deliberately *not* in the vault: trust is this
+  device's view of a server, and keeping it out leaves `passwords.maine`
+  portable. Entries are keyed by host UUID, so deleting a host forgets its key,
+  which is the documented way to re-trust a server that was rebuilt.
+  Fingerprints are computed over the SSH wire encoding, so they read exactly
+  like `ssh-keygen -lf` (`SHA256:...`) and can be compared against the server;
+  `HostKeyFingerprintTest` pins that against a vector produced by `ssh-keygen`.
 * **Password auth only.** There is no `~/.ssh` on Android to read keys from;
   importing keys from the vault is a later pass.
 * **Restored scrollback is a replay, not a snapshot.** A restored session is
   seeded by replaying its saved output stream, which keeps colors and needs no
   second serializer — but it also re-enters whatever terminal modes that output
-  set. History captured while a full-screen program was on the alternate screen
-  can therefore come back garbled on restore; history from a session that only
-  ran shell commands replays cleanly. macOS sidesteps this by saving plain text
-  only, and losing colors with it.
+  set, and answers the terminal queries inside it. Two guards follow from that:
+  emulator replies are suppressed while seeding, otherwise a replayed
+  `XTGETTCAP` lookup gets its answer typed into the live shell; and the emulator
+  is returned to the main screen afterwards, so a transcript captured while a
+  full-screen program was open — the app killed mid-`vim` — replays as the
+  shell's history instead of leaving the new connection drawn over that
+  program's screen. macOS sidesteps all of this by saving plain text only, and
+  losing colors with it.
 * **Vault file is portable.** `VaultStore` implements the macOS v2 envelope
   byte-for-byte (PBKDF2-SHA256 600k, AES-256-GCM, identical AAD), so a
   `passwords.maine` file unlocks on either client. It lives in app-private

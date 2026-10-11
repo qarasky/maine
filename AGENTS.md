@@ -73,7 +73,7 @@ Android (`apps/android`, Kotlin + Compose, minSdk 28):
 | Entry, state | `ui/MainActivity.kt`, `ui/MaineViewModel.kt` | Vault gate on every launch; window-level state shared by screens |
 | Hosts | `model/Host*.kt` | Host model, validation, versioned format (schema parity) |
 | Vault | `vault/VaultStore.kt` | `passwords.maine` v2, byte-compatible with macOS; key in memory only |
-| SSH | `ssh/SshTarget.kt`, `ssh/SshConfigFile.kt`, `session/SshjConnection.kt` | Live sshj transport (password auth, all I/O off the main thread); display args + dial params; read-only ssh config |
+| SSH | `ssh/SshTarget.kt`, `ssh/SshConfigFile.kt`, `session/SshjConnection.kt`, `session/KnownHosts.kt` | Live sshj transport (password auth, host keys pinned on first use, all I/O off the main thread); display args + dial params; read-only ssh config |
 | Sessions | `session/SessionManager.kt`, `session/TerminalSession.kt` | Open sessions keyed by session UUID; session owns the emulator |
 | Terminal | `terminal/` (vendored Termux, Apache-2.0), `session/SshTerminal.kt`, `ui/TerminalSurface.kt`, `ui/ExtraKeysRow.kt` | Real VT/xterm emulator; SSH bytes drive it through a `Transport` instead of a PTY; the view is the input surface, with an on-screen ESC/CTRL/ALT/TAB/arrow row |
 | Tests | `app/src/test/` | Validation, format refusal, ssh args, config reader, vault roundtrip + Swift-generated golden fixture |

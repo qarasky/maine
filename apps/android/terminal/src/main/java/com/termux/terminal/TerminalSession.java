@@ -127,6 +127,14 @@ public final class TerminalSession extends TerminalOutput {
      */
     private boolean mResponsesSuppressed;
 
+    /**
+     * Maine addition: DECRST for the alternate screen modes (47, 1047, 1049),
+     * sent once after replaying saved scrollback so a transcript captured
+     * mid-full-screen-program cannot leave the emulator on the alt screen.
+     */
+    private static final byte[] LEAVE_ALTERNATE_SCREEN =
+        "\033[?1049l".getBytes(StandardCharsets.US_ASCII);
+
 
     private static final String LOG_TAG = "TerminalSession";
 
@@ -275,6 +283,15 @@ public final class TerminalSession extends TerminalOutput {
             mResponsesSuppressed = true;
             try {
                 mEmulator.append(scrollback, scrollback.length);
+                // Maine addition: captured output can end while a full-screen
+                // program was on the alternate screen, if the app was killed
+                // mid-`vim`. Replaying that would leave the emulator there, so
+                // every later byte would be drawn over that program's screen.
+                // Leaving the alternate screen is a no-op when it is not
+                // active (see the DECSET 47/1047/1049 handling), and when it is
+                // it restores the main screen — the shell's own history — with
+                // the cursor restored to where the program started.
+                mEmulator.append(LEAVE_ALTERNATE_SCREEN, LEAVE_ALTERNATE_SCREEN.length);
             } finally {
                 mResponsesSuppressed = false;
             }

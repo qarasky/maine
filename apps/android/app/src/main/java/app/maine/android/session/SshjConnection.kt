@@ -3,7 +3,6 @@ package app.maine.android.session
 import app.maine.android.model.Host
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.Session
-import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import java.io.IOException
 import java.io.OutputStream
 import java.util.concurrent.Executors
@@ -24,15 +23,17 @@ import java.util.concurrent.atomic.AtomicBoolean
  * executor. That executor also coalesces the burst of resizes a keyboard
  * animation produces.
  *
- * Host keys are accepted without checking — the equivalent of
- * `StrictHostKeyChecking=no`. macOS defers to the user's own `ssh`, which pins
- * keys in `known_hosts`; Android has no such file, so pinning needs a
- * vault-backed fingerprint on the host and is not implemented yet.
+ * Host keys are pinned on first use — see [PinnedHostKeyVerifier]. macOS defers
+ * to the user's own `ssh` and its `known_hosts`; this is the same policy kept
+ * in app-private storage, keyed by host so deleting a host forgets its key.
  *
  * Password authentication only: there is no `~/.ssh` on Android to read keys
  * from. Key import from the vault is a later pass.
  */
-class SshjConnection : SshConnection {
+class SshjConnection(
+    private val hostId: String,
+    private val knownHosts: KnownHosts,
+) : SshConnection {
 
     /** Serializes every socket touch that is not already on a background thread. */
     private val io = Executors.newSingleThreadExecutor { runnable ->
@@ -149,6 +150,7 @@ class SshjConnection : SshConnection {
 
     private fun run(host: Host, password: String?, listener: SshConnection.Listener) {
         var ssh: SSHClient? = null
+        val verifier = PinnedHostKeyVerifier(hostId, knownHosts)
         try {
             val user = host.username.trim()
             if (user.isEmpty()) {
@@ -160,7 +162,7 @@ class SshjConnection : SshConnection {
 
             ssh = SSHClient()
             client = ssh
-            ssh.addHostKeyVerifier(PromiscuousVerifier())
+            ssh.addHostKeyVerifier(verifier)
             ssh.connectTimeout = CONNECT_TIMEOUT_MS
             ssh.connect(host.hostname, host.port)
             ssh.authPassword(user, password)
@@ -186,7 +188,9 @@ class SshjConnection : SshConnection {
             }
             if (!closed) listener.onExit(0)
         } catch (e: Exception) {
-            if (!closed) listener.onError(describe(e))
+            // A refused host key is reported with its own reason: sshj's message
+            // says verification failed but not what changed.
+            if (!closed) listener.onError(verifier.mismatch ?: describe(e))
         } finally {
             // Already on a worker thread, so this may touch the socket directly.
             teardown()

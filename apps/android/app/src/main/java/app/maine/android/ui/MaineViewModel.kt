@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.maine.android.model.Host
+import app.maine.android.session.KnownHosts
 import app.maine.android.session.SessionManager
 import app.maine.android.session.SshjConnection
 import app.maine.android.session.TerminalSession
@@ -28,6 +29,12 @@ class MaineViewModel(application: Application) : AndroidViewModel(application) {
     val store = HostStore(vault)
 
     /**
+     * Pinned host keys. Kept out of the vault — trust is this device's view of a
+     * server, not part of the portable configuration.
+     */
+    private val knownHosts = KnownHosts(File(application.filesDir, KnownHosts.FILE_NAME))
+
+    /**
      * The app wires the live sshj transport here; [TerminalSession] and
      * [SessionManager] default to the scripted fake so JVM unit tests stay
      * hermetic and never touch the network.
@@ -37,7 +44,10 @@ class MaineViewModel(application: Application) : AndroidViewModel(application) {
         vault,
         viewModelScope,
         makeSession = { host ->
-            TerminalSession(host = host, makeConnection = { SshjConnection() })
+            TerminalSession(
+                host = host,
+                makeConnection = { SshjConnection(hostId = host.id, knownHosts = knownHosts) },
+            )
         },
     )
 
@@ -152,6 +162,9 @@ class MaineViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteHost(host: Host) {
+        // Deleting a host also forgets its pinned key, which is the documented
+        // way to re-trust a server that was legitimately rebuilt.
+        knownHosts.forget(host.id)
         sessions.delete(host)
     }
 
