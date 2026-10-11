@@ -23,3 +23,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "maine"
 include(":app")
+include(":terminal")

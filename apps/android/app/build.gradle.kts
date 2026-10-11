@@ -48,12 +48,16 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
-    // SSH transport. The live shell session is wired in a later pass; the
-    // dependency is declared now so the build proves the artifact resolves.
-    // Note: sshj pulls in BouncyCastle, which needs care against Android's
-    // bundled BC provider when the connection layer lands (SpongyCastle or
-    // provider insertion order).
+    // Real terminal emulation (VT/xterm parsing + Canvas rendering), vendored
+    // from termux-app under Apache-2.0. See apps/android/terminal.
+    implementation(project(":terminal"))
+    // SSH transport. Note: sshj pulls in BouncyCastle, and Android already
+    // registers a stripped-down provider under the same name ("BC"), so the
+    // full one has to be installed at runtime — see installSshSecurityProvider.
     implementation(libs.sshj)
+    // Declared explicitly (sshj brings it transitively at runtime only) because
+    // that provider swap references BouncyCastleProvider at compile time.
+    implementation(libs.bouncycastle.bcprov)
 
     testImplementation(libs.junit)
 }

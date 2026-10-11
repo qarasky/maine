@@ -15,9 +15,9 @@ class TerminalSessionTest {
         val session = TerminalSession(host = Host(name = "W", hostname = "example.com"))
         session.connect()
         awaitTrue { session.state.value is TerminalSession.State.Connected }
-        assertTrue(session.output.value.contains("example.com"))
+        assertTrue(session.historySnapshot().contains("example.com"))
         session.send("hello\n")
-        awaitTrue { session.output.value.contains("hello") }
+        awaitTrue { session.historySnapshot().contains("hello") }
         assertTrue(session.state.value.isLive)
         session.disconnect()
         assertTrue(session.state.value is TerminalSession.State.Disconnected)

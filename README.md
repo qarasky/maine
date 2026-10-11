@@ -106,7 +106,7 @@ maine/
 ├── apps/
 │   ├── macos/              Swift + SwiftUI application
 │   ├── windows/            WPF + C# application (.NET 8)
-│   └── android/            Kotlin + Compose application (scaffold pass)
+│   └── android/            Kotlin + Compose application (vault parity, real terminal)
 ├── packages/
 │   └── schema/           Versioned JSON configuration format + validator
 ├── docs/                 architecture.md, macos-design.md, images/
@@ -131,7 +131,7 @@ The macOS application is the first client, and it is at version 1.0.0:
 | Unified encrypted hosts/password vault | done |
 | Saved passwords, portable encrypted vault, master-password unlock | done |
 | Windows client (WPF + C#, portable vault, ConPTY sessions) | in progress |
-| Android client (scaffold: vault parity, host CRUD, stub terminal) | in progress |
+| Android client (vault parity, host CRUD, real terminal) | in progress |
 | Linux client | not started |
 | Sync, accounts, key management | not planned |
 

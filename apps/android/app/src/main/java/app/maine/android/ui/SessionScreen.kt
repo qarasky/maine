@@ -1,48 +1,51 @@
 package app.maine.android.ui
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.maine.android.session.TerminalSession
-import app.maine.android.ssh.SshTarget
 
 /**
- * One open session: compact connection header, error banner when the
- * transport failed, scrollback kept as plain text, and an input row.
+ * One open session: a compact connection header, an error banner when the
+ * transport failed, and the terminal itself below.
  *
- * This is the stub terminal for the scaffold pass: scrollback plus input,
- * backed by [TerminalSession]. Full terminal emulation (Termux
- * terminal-view) replaces this screen's output view in a later pass; the
- * session lifecycle underneath does not change.
+ * The terminal is a real emulator (see [TerminalSurface]) and is also the input
+ * surface — tapping it raises the keyboard and typing goes to the remote shell.
+ * There is no separate input field.
  */
 @Composable
 fun SessionScreen(
@@ -54,48 +57,66 @@ fun SessionScreen(
     val sessions by viewModel.sessions.openSessions.collectAsState()
     val session = sessions.firstOrNull { it.id == sessionId } ?: return
     val state by session.state.collectAsState()
-    val output by session.output.collectAsState()
-    val scroll = rememberScrollState()
 
-    LaunchedEffect(output) {
-        scroll.animateScrollTo(scroll.maxValue)
-    }
+    val extraKeys = remember(session.id) { ExtraKeysState() }
+    val density = LocalDensity.current
+    // Read before `imePadding()` consumes the insets below: the keys row only
+    // belongs on screen when the soft keyboard is, like Termux.
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    val gestureInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
-    val target = SshTarget.make(host = session.host)
-
-    Column(modifier = modifier.fillMaxSize()) {
-        Row(
+    Column(modifier = modifier.fillMaxSize().imePadding()) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = "Back to hosts")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Icon(Icons.Filled.ArrowBack, contentDescription = "Back to hosts")
+                }
+                StatusDot(kind = state.statusKind())
+                Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(
+                        session.host.displayName,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        state.label.uppercase(),
+                        fontFamily = MaineMono,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(
+                    onClick = { viewModel.sessions.reconnectSession(session.id) },
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "Reconnect")
+                }
+                IconButton(
+                    onClick = {
+                        viewModel.sessions.closeSession(session.id)
+                        onBack()
+                    },
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close session")
+                }
             }
-            StatusDot(connected = state.isLive)
-            Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                Text(session.host.subtitle, style = MaterialTheme.typography.bodyLarge)
-                Text(state.label, style = MaterialTheme.typography.bodySmall)
-            }
-            IconButton(onClick = { viewModel.sessions.reconnectSession(session.id) }) {
-                Icon(Icons.Filled.Refresh, contentDescription = "Reconnect")
-            }
-            IconButton(onClick = {
-                viewModel.sessions.closeSession(session.id)
-                onBack()
-            }) {
-                Icon(Icons.Filled.Close, contentDescription = "Close session")
-            }
-        }
-
-        SelectionContainer {
-            Text(
-                target.commandLine,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
         }
 
         if (state.showsErrorBanner(session.wasIntentionalDisconnect())) {
@@ -108,53 +129,55 @@ fun SessionScreen(
                     "Disconnected (${(state as TerminalSession.State.Disconnected).exitCode ?: "?"})"
                 else -> "Connection ended"
             }
-            Text(
-                message,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-        }
-
-        SelectionContainer(modifier = Modifier.weight(1f)) {
-            Text(
-                output.ifEmpty { "—" },
-                style = MaterialTheme.typography.bodyMedium,
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                ),
                 modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(scroll)
-                    .padding(16.dp),
-            )
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+            ) {
+                Text(message, modifier = Modifier.padding(12.dp))
+            }
+            Spacer(Modifier.height(8.dp))
         }
 
-        var input by remember(session.id) { mutableStateOf("") }
-        Row(
+        // Full-bleed: the terminal sheet reaches the left, right and bottom
+        // screen edges, with only its top corners rounded, so it reads as a
+        // sheet tucked under the header. The keys row is part of that sheet and
+        // sits directly above the soft keyboard.
+        Column(
             modifier = Modifier
+                .weight(1f)
                 .fillMaxWidth()
-                .padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                .background(MaineColors.Terminal),
         ) {
-            OutlinedTextField(
-                value = input,
-                onValueChange = { input = it },
-                label = { Text("Send input") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = {
-                    session.send(input + "\n")
-                    input = ""
-                }),
-                enabled = state.isLive,
-                modifier = Modifier.weight(1f),
+            TerminalSurface(
+                session = session,
+                extraKeys = extraKeys,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(
+                        start = TerminalInset,
+                        end = TerminalInset,
+                        top = TerminalInset,
+                        // The keys row already holds the bottom clear of the
+                        // gesture bar; only pad for it when the row is absent.
+                        bottom = if (imeVisible) TerminalInset else TerminalInset + gestureInset,
+                    ),
             )
-            IconButton(
-                onClick = {
-                    session.send(input + "\n")
-                    input = ""
-                },
-                enabled = state.isLive,
-            ) {
-                Icon(Icons.Filled.Send, contentDescription = "Send")
+            if (imeVisible) {
+                ExtraKeysRow(
+                    state = extraKeys,
+                    onKey = { key ->
+                        session.sendSpecialKey(key.keyCode, extraKeys.modifierMask())
+                        extraKeys.clear()
+                    },
+                )
             }
         }
     }

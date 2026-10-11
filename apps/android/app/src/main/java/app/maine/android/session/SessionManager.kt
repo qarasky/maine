@@ -164,7 +164,7 @@ class SessionManager(
             session.savedSessionId = saved.id
             // Restored history stays as scrollback; the session reconnects
             // on its own so the user never has to press Connect after unlock.
-            session.restoreHistory(saved.history)
+            session.restoreHistory(separated(saved.history))
             sessionNumbers[session.id] = saved.number
                 ?: (if (generatedName) saved.name.substringAfterLast(" ").toIntOrNull() else null)
                 ?: (sessionsFor(host.id).size + 1)
@@ -237,7 +237,7 @@ class SessionManager(
         replacement.customName = previous.customName
         replacement.savedSessionId = previous.savedSessionId
         if (previous.savedSessionId != null) {
-            replacement.restoreHistory(previous.historySnapshot() + "\n— New connection —")
+            replacement.restoreHistory(separated(previous.historySnapshot()))
         }
         sessionNumbers[replacement.id] = sessionNumbers.remove(previous.id) ?: 1
         // Publish one replacement, not an empty workspace followed by an open.
@@ -305,7 +305,18 @@ class SessionManager(
     private fun savedPassword(host: Host): String? =
         runCatching { vault.passwordFor(host.id) }.getOrNull()
 
+    /**
+     * Marks where the output of a (re)started connection begins, so its banner
+     * does not run into the previous prompt on the same line — the scrollback
+     * ends mid-line, right after the shell prompt.
+     */
+    private fun separated(history: String): String =
+        if (history.isEmpty()) history else history + NEW_CONNECTION_SEPARATOR
+
     companion object {
         private val DEFAULT_NAME_REGEX = Regex("^Session [0-9]+$")
+
+        /** CRLF so the separator always starts in the first column. */
+        private const val NEW_CONNECTION_SEPARATOR = "\r\n— New connection —\r\n"
     }
 }

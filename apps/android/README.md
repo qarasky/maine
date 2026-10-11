@@ -1,7 +1,8 @@
 # Maine for Android
 
 Second Maine client: Kotlin + Jetpack Compose, same local-first SSH model as
-the macOS app. Status: scaffold pass — builds, unit-tests, stub terminal.
+the macOS app. Status: functional against real hosts — real VT/xterm terminal
+as the input surface, live sshj transport, portable vault.
 
 ## Layout
 
@@ -15,8 +16,12 @@ apps/android/
 │       ├── ssh/      SshTarget (display args + dial params), SshConfigFile reader
 │       ├── vault/    VaultStore (v2 vault, byte-compatible with macOS)
 │       ├── store/    HostStore (owns the host list)
-│       ├── session/  SshConnection (transport seam), TerminalSession, SessionManager
-│       └── ui/       Compose screens: unlock, host list, editor, session
+│       ├── session/  SshConnection (transport seam), SshTerminal (emulator bridge),
+│       │             TerminalSession, SessionManager
+│       └── ui/       Compose screens: unlock, host list, editor, session;
+│                     TerminalSurface + MaineTerminalPalette
+├── terminal/                        vendored Termux terminal-emulator + terminal-view
+│                                    (Apache-2.0; see THIRD_PARTY_LICENSES.md)
 ├── app/src/test/                    JVM unit tests (no emulator needed)
 └── tools/make-golden-vault.swift    Swift generator for the vault interop fixture
 ```
@@ -27,6 +32,7 @@ apps/android/
 cd apps/android
 ./gradlew :app:testDebugUnitTest   # JVM unit tests (~50 tests, no emulator)
 ./gradlew :app:assembleDebug       # APK; install on the emulator when ready
+./gradlew :terminal:assembleDebug  # vendored terminal module alone
 ```
 
 Requires: JDK 17+, Android SDK with platform 36 + build tools 36
@@ -36,9 +42,36 @@ First run downloads Gradle 8.13 and dependencies (~500 MB).
 ## Key decisions
 
 * **No system `ssh`.** The macOS client shells out to `/usr/bin/ssh`; Android
-  uses the [sshj](https://github.com/hierynomus/sshj) library (declared, wired
-  next pass). `SshTarget` keeps the same display rules (port 22 omits `-p`,
-  empty user omits `-l`) and now also carries the dial parameters.
+  uses the [sshj](https://github.com/hierynomus/sshj) library. `SshTarget` keeps
+  the same display rules (port 22 omits `-p`, empty user omits `-l`) and also
+  carries the dial parameters.
+* **Every sshj call is off the main thread.** Android raises
+  `NetworkOnMainThreadException` for socket work on the UI thread, and sshj
+  writes to the socket from whichever thread calls it — so a window-change or a
+  disconnect issued from the UI thread aborts mid-packet and corrupts the SSH
+  stream, which the server answers with a connection reset. Connecting and
+  reading run on one worker thread; `resize` and `close` are handed to a
+  single-threaded executor, which also coalesces the burst of resizes a keyboard
+  animation produces. Resizes become SSH `window-change`, so `stty size` in the
+  session matches the view.
+* **BouncyCastle is swapped in.** Android registers a stripped-down
+  BouncyCastle under the same provider name ("BC") that sshj looks up, and it
+  cannot do `ssh-ed25519`, which most servers now offer.
+  `installSshSecurityProvider()` replaces it with the full provider sshj
+  depends on, from `MainActivity` before anything can connect.
+* **Host keys are not checked yet.** `PromiscuousVerifier` accepts whatever
+  answers — the equivalent of `StrictHostKeyChecking=no`. macOS defers to the
+  user's own `ssh`, which pins keys in `known_hosts`; Android has no such file,
+  so pinning needs a vault-backed fingerprint field on the host.
+* **Password auth only.** There is no `~/.ssh` on Android to read keys from;
+  importing keys from the vault is a later pass.
+* **Restored scrollback is a replay, not a snapshot.** A restored session is
+  seeded by replaying its saved output stream, which keeps colors and needs no
+  second serializer — but it also re-enters whatever terminal modes that output
+  set. History captured while a full-screen program was on the alternate screen
+  can therefore come back garbled on restore; history from a session that only
+  ran shell commands replays cleanly. macOS sidesteps this by saving plain text
+  only, and losing colors with it.
 * **Vault file is portable.** `VaultStore` implements the macOS v2 envelope
   byte-for-byte (PBKDF2-SHA256 600k, AES-256-GCM, identical AAD), so a
   `passwords.maine` file unlocks on either client. It lives in app-private
@@ -48,11 +81,38 @@ First run downloads Gradle 8.13 and dependencies (~500 MB).
 * **UUID casing.** macOS writes uppercase `UUID().uuidString` and looks
   passwords up with that exact casing. Android normalizes IDs to uppercase
   on read/write; comparisons are case-insensitive.
-* **Terminal is a stub.** Scrollback `Text` + input row backed by the real
-  `TerminalSession`/`SessionManager` lifecycle (fake transport). Full VT
-  emulation (Termux terminal-view) replaces the output view later; session
-  semantics (keyed by session UUID, close-vs-quit, 2s autosave, 1 MiB cap)
-  already match macOS.
+* **Real terminal emulation, vendored.** The terminal is Termux's
+  `terminal-emulator` + `terminal-view`, copied verbatim into the `terminal/`
+  module under Apache-2.0 (see `terminal/THIRD_PARTY_LICENSES.md`). Local
+  patches: `TerminalSession` gains a public `Transport` interface so an SSH byte
+  stream drives the emulator instead of Termux's native PTY fork — skipping
+  every JNI call — and that interface carries the size, so resizes reach the
+  remote shell. Verified on a real host: colored `ls`, a real PTY (`/dev/pts/0`,
+  `TERM=xterm-256color`), `stty size` following the keyboard, and full-screen
+  `vim` with the alternate screen restoring cleanly on exit.
+* **The terminal is the input surface.** Tapping the terminal focuses it and
+  raises the keyboard; there is no separate "send input" field. `TerminalView`
+  handles the IME, hardware keys, pinch-to-zoom text and text selection, and its
+  `onCopyTextToClipboard`/`onPasteTextFromClipboard` callbacks bridge OSC-52 and
+  paste to the system clipboard.
+* **The emulator lives in the session, not the view.** So navigating away and
+  back rebuilds only the view and re-attaches to the same terminal state. It is
+  created lazily on the main thread (the vendored session binds a `Handler`),
+  which is also why JVM unit tests never construct one. Remote bytes arriving
+  before a view exists are buffered (capped) and replayed, so a session restored
+  at launch is never blank.
+* **Terminal palette is Maine's.** `MaineTerminalPalette` rewrites Termux's
+  default xterm palette at launch: pure-black background, the brand yellow as
+  cursor and ANSI "yellow", desaturated ANSI colors so `ls` does not fight the
+  monochrome UI. Terminals stay dark on both app themes, as on macOS.
+* **Extra keys row.** ESC, CTRL, ALT, TAB and the four arrows sit between the
+  terminal and the soft keyboard, and only while the keyboard is up, because a
+  soft keyboard has no Tab, Escape or arrows — without them there is no tab
+  completion, no `Ctrl+C` and no way out of `vim`'s insert mode. CTRL and ALT
+  light up while armed and are one-shot, so an armed Ctrl cannot control-code
+  the rest of a typed command. The rest are sent as real VT sequences through
+  `KeyHandler`, so arrows honour the application-cursor mode that `vim` and
+  `less` switch on rather than always sending the base sequence.
 * **`~/.ssh/config` reader** is ported for host import and display
   resolution, but Android devices normally have no such file — it loads
   empty and stays read-only, like macOS.

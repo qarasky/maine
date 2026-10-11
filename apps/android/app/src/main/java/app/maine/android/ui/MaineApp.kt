@@ -1,5 +1,12 @@
 package app.maine.android.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
@@ -34,25 +41,48 @@ fun MaineApp(viewModel: MaineViewModel) {
         return
     }
 
+    // On a session, Back returns to the host list. Without this the system back
+    // gesture finishes the activity and drops the user out of the app.
+    BackHandler(enabled = route is Route.Session) {
+        route = Route.Hosts
+    }
+
     Scaffold(modifier = Modifier.fillMaxSize()) { inner ->
-        when (val current = route) {
-            is Route.Hosts -> HostListScreen(
-                modifier = Modifier.padding(inner),
-                viewModel = viewModel,
-                onOpenSession = { route = Route.Session(it) },
-            )
-            is Route.Session -> {
-                val session = sessions.firstOrNull { it.id == current.sessionId }
-                    ?: sessions.firstOrNull { it.id == selectedId }
-                if (session == null) {
-                    route = Route.Hosts
-                } else {
-                    SessionScreen(
-                        modifier = Modifier.padding(inner),
-                        viewModel = viewModel,
-                        sessionId = session.id,
-                        onBack = { route = Route.Hosts },
-                    )
+        AnimatedContent(
+            targetState = route,
+            transitionSpec = {
+                fadeIn(animationSpec = tween(180)) +
+                    slideInVertically(
+                        animationSpec = tween(200),
+                        initialOffsetY = { it / 12 },
+                    ) togetherWith
+                    fadeOut(animationSpec = tween(100))
+            },
+            label = "route",
+            modifier = Modifier.fillMaxSize(),
+        ) { current ->
+            when (current) {
+                is Route.Hosts -> HostListScreen(
+                    modifier = Modifier.padding(inner),
+                    viewModel = viewModel,
+                    onOpenSession = { route = Route.Session(it) },
+                )
+                is Route.Session -> {
+                    val session = sessions.firstOrNull { it.id == current.sessionId }
+                        ?: sessions.firstOrNull { it.id == selectedId }
+                    if (session == null) {
+                        route = Route.Hosts
+                    } else {
+                        SessionScreen(
+                            // Top inset only: the terminal runs to the bottom
+                            // edge of the screen, so this screen does not take
+                            // the bottom system-bar inset.
+                            modifier = Modifier.padding(top = inner.calculateTopPadding()),
+                            viewModel = viewModel,
+                            sessionId = session.id,
+                            onBack = { route = Route.Hosts },
+                        )
+                    }
                 }
             }
         }
@@ -60,7 +90,7 @@ fun MaineApp(viewModel: MaineViewModel) {
 
     val editing = viewModel.editingHost
     if (editing != null) {
-        HostEditorDialog(
+        HostEditorSheet(
             initial = editing,
             password = viewModel.editorPassword,
             onPasswordChange = { viewModel.editorPassword = it },

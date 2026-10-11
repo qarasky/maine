@@ -4,13 +4,13 @@ Instructions for AI coding agents working in this repository. Humans use `README
 
 ## What this is
 
-Maine is a local-first SSH client for macOS (Swift 6, SwiftUI, macOS 14+), Windows (C#, WPF, .NET 8) and Android (Kotlin, Compose, SDK 28+). Swift package at `apps/macos` with one dependency (SwiftTerm); .NET solution at `apps/windows` (`Maine.Core` has no UI dependencies); Gradle module at `apps/android` (sshj for SSH, Compose for UI). No backend, no sync, no telemetry. Shared cross-client contract lives in `packages/schema`, not shared code — except the vault envelope, which every client implements byte-for-byte so the file is portable.
+Maine is a local-first SSH client for macOS (Swift 6, SwiftUI, macOS 14+), Windows (C#, WPF, .NET 8) and Android (Kotlin, Compose, SDK 28+). Swift package at `apps/macos` with one dependency (SwiftTerm); .NET solution at `apps/windows` (`Maine.Core` has no UI dependencies); Gradle project at `apps/android` (sshj for SSH, Compose for UI, and a vendored Termux terminal module for emulation). No backend, no sync, no telemetry. Shared cross-client contract lives in `packages/schema`, not shared code — except the vault envelope, which every client implements byte-for-byte so the file is portable.
 
 ```
 maine/
 ├── apps/macos/     The app: Sources/Maine, Tests/MaineTests, scripts/, Resources/
 ├── apps/windows/   WPF + C# client: src/Maine.Core, src/Maine.App, tests/
-├── apps/android/   Kotlin + Compose client: app/src/{main,test}, tools/, README.md
+├── apps/android/   Kotlin + Compose client: app/src/{main,test}, terminal/, tools/, README.md
 ├── packages/schema/ Versioned JSON config format + Python validator
 ├── docs/           architecture.md, macos-design.md, images/
 └── README.md
@@ -73,8 +73,9 @@ Android (`apps/android`, Kotlin + Compose, minSdk 28):
 | Entry, state | `ui/MainActivity.kt`, `ui/MaineViewModel.kt` | Vault gate on every launch; window-level state shared by screens |
 | Hosts | `model/Host*.kt` | Host model, validation, versioned format (schema parity) |
 | Vault | `vault/VaultStore.kt` | `passwords.maine` v2, byte-compatible with macOS; key in memory only |
-| SSH | `ssh/SshTarget.kt`, `ssh/SshConfigFile.kt` | Display args + dial params; read-only ssh config |
-| Sessions | `session/SessionManager.kt`, `session/TerminalSession.kt` | Open sessions keyed by session UUID; stub scrollback terminal |
+| SSH | `ssh/SshTarget.kt`, `ssh/SshConfigFile.kt`, `session/SshjConnection.kt` | Live sshj transport (password auth, all I/O off the main thread); display args + dial params; read-only ssh config |
+| Sessions | `session/SessionManager.kt`, `session/TerminalSession.kt` | Open sessions keyed by session UUID; session owns the emulator |
+| Terminal | `terminal/` (vendored Termux, Apache-2.0), `session/SshTerminal.kt`, `ui/TerminalSurface.kt`, `ui/ExtraKeysRow.kt` | Real VT/xterm emulator; SSH bytes drive it through a `Transport` instead of a PTY; the view is the input surface, with an on-screen ESC/CTRL/ALT/TAB/arrow row |
 | Tests | `app/src/test/` | Validation, format refusal, ssh args, config reader, vault roundtrip + Swift-generated golden fixture |
 
 ## Invariants — do not break these

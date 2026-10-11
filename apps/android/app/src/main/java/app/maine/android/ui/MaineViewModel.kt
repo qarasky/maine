@@ -8,6 +8,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.maine.android.model.Host
 import app.maine.android.session.SessionManager
+import app.maine.android.session.SshjConnection
+import app.maine.android.session.TerminalSession
 import app.maine.android.store.HostStore
 import app.maine.android.vault.VaultStore
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +26,20 @@ class MaineViewModel(application: Application) : AndroidViewModel(application) {
 
     private val vault = VaultStore(File(application.filesDir, VaultStore.FILE_NAME))
     val store = HostStore(vault)
-    val sessions = SessionManager(store, vault, viewModelScope)
+
+    /**
+     * The app wires the live sshj transport here; [TerminalSession] and
+     * [SessionManager] default to the scripted fake so JVM unit tests stay
+     * hermetic and never touch the network.
+     */
+    val sessions = SessionManager(
+        store,
+        vault,
+        viewModelScope,
+        makeSession = { host ->
+            TerminalSession(host = host, makeConnection = { SshjConnection() })
+        },
+    )
 
     var locked by mutableStateOf(true)
         private set
