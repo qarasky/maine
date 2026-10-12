@@ -16,7 +16,7 @@ Maine is a small, local-first SSH client for macOS. It keeps hosts and passwords
 
 ## Why
 
-Maine is the shortest path between "I have a server" and "I am logged in". It is not a terminal emulator with a host manager bolted on, and it is not a cloud dashboard. Click a host, get a full terminal emulator with keyboard input, resizing and `Ctrl`/`Esc` sequences, rendered with [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm). Right-click a host with a live session and choose **New Session** for another independent connection; sessions appear as indented rows beneath their host, each with its own close control.
+Maine is the shortest path between "I have a server" and "I am logged in". It is not a terminal emulator with a host manager bolted on, and it is not a cloud dashboard. Click a host, get a full terminal emulator with keyboard input, resizing and `Ctrl`/`Esc` sequences, rendered with [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm). Right-click a host with a live session and choose **New Session** for another independent connection; sessions appear as indented rows beneath their host, each with its own close control. Right-click any host (or use **Host → Copy Credentials**) to copy its details as a plain-text block — `[ip]`, `[username]`, and the saved `[password]` when the vault is unlocked — ready to paste into a setup note or a chat. The copied block stays on the clipboard until something else replaces it.
 
 ## Quickstart
 

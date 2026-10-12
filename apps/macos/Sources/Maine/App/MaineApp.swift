@@ -50,6 +50,8 @@ struct MaineApp: App {
                 Button("Reconnect to Selected Host") { reconnectSelectedHost() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
 
+                Button("Copy Credentials") { copySelectedHostCredentials() }
+
                 Divider()
 
                 Button("Unlock Password Vault…") { appState.isVaultSheetPresented = true }
@@ -122,6 +124,11 @@ struct MaineApp: App {
     private func reconnectSelectedHost() {
         guard let id = sessions.selectedSessionID else { return }
         sessions.reconnectSession(id)
+    }
+
+    private func copySelectedHostCredentials() {
+        guard let host = store.host(id: sessions.selectedHostID) else { return }
+        CredentialCommands.copy(host: host, appState: appState)
     }
 
     private func deleteSelectedHost() {

@@ -298,6 +298,7 @@ struct HostListView: View {
             Divider()
             Button("Edit Host…") { appState.edit(host) }
             Button("Duplicate Host") { duplicate(host) }
+            Button("Copy Credentials") { CredentialCommands.copy(host: host, appState: appState) }
             Divider()
             Button("Delete Host", role: .destructive) { sessions.delete(host) }
         }

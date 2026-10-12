@@ -251,6 +251,12 @@ respect accessibility Reduce Motion.
   there is no Dock icon (`LSUIElement`). Left-click restores the window;
   right-click offers Open, Lock or Unlock, and Quit. Quit checkpoints sessions
   and removes the vault key exactly like Command-Q.
+* **Copy Credentials.** **Host → Copy Credentials** and a host's context menu
+  write `[ip]`, `[port]` (only when not 22), `[username]` (when set) and
+  `[password]` (when a saved password is unlocked) to the pasteboard as plain
+  text. A locked vault requests the master password first; the debug log
+  records the host ID only, never the block, and the text stays on the
+  clipboard until something else replaces it.
 * **State lives where it is used.** The host list is owned by `HostStore`, open
   sessions by `SessionManager`, and the host being edited by `AppState`, so the
   menu commands and the views can never disagree about what is selected.

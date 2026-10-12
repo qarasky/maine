@@ -80,6 +80,7 @@ empty-state text, and backgrounding does not lock the vault.
 | --- | --- | --- | --- |
 | Add / edit / delete host | ✅ | ✅ | ✅ |
 | Duplicate host | ✅ (name gets ` copy`) | ✅ (name gets ` (copy)`) | ❌ |
+| Copy credentials (plain-text block) | ✅ Host menu + right-click | ❌ (see §7.8) | ❌ (see §7.8) |
 | Validation (name, hostname rules, port 1–65535, username rules) | ✅ | ✅ | ✅ |
 | Username may be blank to defer to ssh config | ✅ | ✅ | ❌ editor requires it (model allows blank) |
 | Password mandatory to save a host | ✅ | ✅ | ✅ |
@@ -391,6 +392,22 @@ macOS implements everything the other clients target, except:
    Android launcher icon + About/version + empty state, terminal search on all
    clients; refresh stale docs (`architecture.md` password claim,
    `packages/schema/README.md`, Windows README parity row).
+8. **Copy credentials on Windows and Android** — mirror the macOS
+   **Host → Copy Credentials** action (also on a host's right-click menu):
+   copy a plain-text block with one field per line and only the fields that
+   exist, in this order:
+
+   ```
+   [ip] <hostname>
+   [port] <port>          (only when the port is not 22)
+   [username] <user>      (only when set)
+   [password] <password>  (only when saved and the vault is unlocked)
+   ```
+
+   A locked vault must request the master password first (or omit the password
+   line and say so); never log the copied text, and keep the format identical
+   across clients so pasted blocks look the same. macOS reference:
+   `Models/CredentialText.swift` + `App/CredentialCommands.swift`.
 
 ---
 
