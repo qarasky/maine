@@ -55,6 +55,10 @@ as a custom imitation: Maine supports macOS 14 and uses native system materials.
   of sidebar chrome. Terminal rendering and scrollback remain SwiftTerm-owned.
 - Existing short, Reduce-Motion-aware transitions remain. No gradients, ornamental
   cards, enormous titles, added tab bars, decorative charts or unrelated features.
+- Maine is a menu bar resident: the status item carries the M mark, left-click
+  restores the window, and right-click keeps Lock, Unlock and Quit one gesture
+  away. No Dock icon or background item is added; the single-window, sidebar-only
+  layout is unchanged when the window returns.
 
 ## Verification
 

@@ -20,13 +20,13 @@ Maine is the shortest path between "I have a server" and "I am logged in". It is
 
 ## Quickstart
 
-1. **Build and open the app** ([from source](#build-and-develop)). On first launch, create the password vault with a master password of at least 12 characters. Maine asks for it on every launch; canceling leaves passwords locked.
+1. **Build and open the app** ([from source](#build-and-develop)). On first launch, create the password vault with a master password of at least 12 characters. Maine asks for it on every launch; canceling leaves passwords locked. Closing the window does not quit: Maine stays in the menu bar, where a left-click reopens the window and a right-click offers Lock, Unlock and Quit.
 2. **Add a host.** Click **New Host** (or press ⌘N) and fill in a name, a hostname or IP, and a password. Port and username are optional — leave them at `22` and blank to let OpenSSH decide from `~/.ssh/config`. Passwords cannot be edited or saved while the vault is locked.
 3. **Connect.** Click a host in the sidebar to connect immediately. There is no intermediate host-details page.
 4. **Work.** Click the sidebar session's **×** (or press ⇧⌘W) to close it and disconnect. The saved host stays in the list. Double-click a session name to rename it in place (Return saves, Escape cancels).
 5. **Come back.** Quit and reopen Maine, then unlock the vault. Sessions return with their names and history, and reconnect automatically with history kept as scrollback. Switching sessions happens entirely in the sidebar.
 
-Keyboard shortcuts: ⌘N new host, ⌘F search hosts, ⌘⏎ connect the selected host, ⇧⌘R reconnect, ⇧⌘W close a session and disconnect, ⌘W close the window.
+Keyboard shortcuts: ⌘N new host, ⌘F search hosts, ⌘⏎ connect the selected host, ⇧⌘R reconnect, ⇧⌘W close a session and disconnect, ⌘W close the window and keep running in the menu bar.
 
 ## Why not just SSH?
 
@@ -38,7 +38,7 @@ Maine has no accounts, no cloud, no sync and no telemetry — there is nothing t
 
 ## What's in the vault
 
-**`~/Library/Application Support/Maine/passwords.maine` is the single active vault**, written with `0600` permissions. It encrypts host names, addresses, ports, usernames, IDs and passwords together in an authenticated AES-256-GCM payload. A master password derives the encryption key with PBKDF2-SHA256 (600,000 iterations and a random salt). The unlock key lives in Keychain only for the current app session, for use by the SSH helper. It is removed on quit and reset on launch; **Host → Lock Password Vault** also removes it. Locking does not disconnect already-open sessions.
+**`~/Library/Application Support/Maine/passwords.maine` is the single active vault**, written with `0600` permissions. It encrypts host names, addresses, ports, usernames, IDs and passwords together in an authenticated AES-256-GCM payload. A master password derives the encryption key with PBKDF2-SHA256 (600,000 iterations and a random salt). The unlock key lives in Keychain only for the current app session, for use by the SSH helper. It is removed on quit and reset on launch, so quitting always requires the master password again; closing the window while Maine runs in the menu bar does not. **Host → Lock Password Vault** and the menu bar's right-click menu remove it on demand. Locking does not disconnect already-open sessions.
 
 To share or move hosts and passwords, choose **Host → Show Encrypted Vault** and copy **only `passwords.maine`**. Quit Maine on the receiving Mac, back up its existing files, then place the copy in its Maine Application Support directory. Open Maine and choose **Host → Unlock Password Vault**. Send the master password separately, not alongside the files. Host IDs must remain unchanged, and sharing the vault grants access to all passwords in that file. This is file sharing, not automatic sync or merging. A forgotten master password cannot be recovered on another Mac.
 

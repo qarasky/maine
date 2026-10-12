@@ -53,12 +53,7 @@ struct MaineApp: App {
                 Divider()
 
                 Button("Unlock Password Vault…") { appState.isVaultSheetPresented = true }
-                Button("Lock Password Vault") {
-                    do {
-                        try sessions.checkpointSessions()
-                        appState.lockVault()
-                    } catch { appState.showAlert(title: "Sessions could not be saved", error.localizedDescription) }
-                }
+                Button("Lock Password Vault") { VaultCommands.lock(appState: appState, sessions: sessions) }
                     .disabled(!appState.isVaultUnlocked)
                 Button("Show Encrypted Vault") {
                     NSWorkspace.shared.activateFileViewerSelecting([PasswordStore.defaultFileURL])
@@ -158,12 +153,24 @@ final class MaineAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Maine is a menu bar resident: the window can close while sessions
+        // stay connected, so the process must not be reaped while idle. The
+        // runtime opt-out also covers development runs without the bundle,
+        // whose Info.plist is not read.
+        ProcessInfo.processInfo.disableAutomaticTermination("Maine stays in the menu bar")
+        NSApp.setActivationPolicy(.accessory)
+        MenuBarController.shared.install()
         DebugLog.shared.record("application.launch", fields: [
             "format": "disconnect-diagnostics-v1",
             "executable": Bundle.main.executableURL?.path ?? CommandLine.arguments[0],
             "osVersion": ProcessInfo.processInfo.operatingSystemVersionString,
             "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
         ], flush: true)
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        MenuBarController.shared.showMainWindow()
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {

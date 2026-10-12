@@ -55,7 +55,7 @@ apps/macos/
 ├── Resources/Info.plist     Bundle metadata used by scripts/build-app.sh
 ├── scripts/                 build-app.sh, install.sh, render-*.swift (icon pipeline)
 ├── Sources/Maine/
-│   ├── App/                 @main entry point, menu commands, window state
+│   ├── App/                 @main entry point, menu commands, menu bar item, window state
 │   ├── Models/              Host, the versioned configuration, the store
 │   ├── Services/            ssh command building, ~/.ssh/config reading
 │   ├── Sessions/            PTY sessions and the session manager
@@ -70,6 +70,10 @@ together and why they are arranged that way.
 
 * **Platform-specific code stays here.** Shared formats live in
   `packages/schema`, shared code does not exist yet.
+* **Maine is a menu bar resident.** Closing the window hides it while sessions
+  keep running; the status item restores the window (left-click) and offers
+  Lock, Unlock and Quit (right-click). `applicationShouldTerminateAfterLastWindowClosed`
+  must stay false, and quitting goes through the same checkpoint path as ⌘Q.
 * **Keep the terminal view alive.** Terminals are owned by their
   `TerminalSession`, not by the SwiftUI view that displays them, so switching
   tabs keeps scrollback and focus intact.

@@ -121,7 +121,7 @@ Five layers, one file each, each testable without the others:
 
 | Layer | Files | Responsibility |
 | ----- | ----- | -------------- |
-| App | `App/MaineApp.swift`, `App/AppState.swift` | Entry point, menu commands, the window-level UI state the menus and views share. |
+| App | `App/MaineApp.swift`, `App/AppState.swift`, `App/MenuBarController.swift` | Entry point, menu commands, the menu bar item that keeps the app resident, and the window-level UI state the menus and views share. |
 | Models | `Models/Host.swift`, `Models/HostConfiguration.swift`, `Models/HostStore.swift` | The host, the versioned file format, and the store that owns the file on disk. |
 | Services | `Services/SSHTarget.swift`, `Services/SSHConfigFile.swift` | Building the `ssh` invocation, and reading (never writing) `~/.ssh/config`. |
 | Sessions | `Sessions/TerminalSession.swift`, `Sessions/SessionManager.swift` | One PTY session per host, and which sessions are open. |
@@ -198,8 +198,11 @@ The master password is never stored. The derived encryption key is remembered
 in the local login Keychain, indexed by vault ID, only for the current app
 session. Normal quit removes it; launch resets it even after a crash. Every
 launch presents the master-password sheet, and locked editors disable password
-input. A password is required for adding or saving a host; existing
-hosts without one show an actionable edit prompt when connection is attempted.
+input. While the process runs, Maine is a menu bar resident: closing the window
+only hides it, so the vault stays unlocked and sessions stay connected until
+quit or an explicit lock. A password is required for adding or saving a host;
+existing hosts without one show an actionable edit prompt when connection is
+attempted.
 Copying only the vault to another Mac requires its
 master password to unlock; neither Keychain export nor plaintext export is needed.
 
@@ -244,6 +247,10 @@ respect accessibility Reduce Motion.
   and a quiet status indicator; the exact command is available in its help tooltip.
   Native search supports Command-F; Delete closes a session rather than deleting
   its host. See [the design references and layout decisions](macos-design.md).
+* **Resident in the menu bar.** The status item is the app's only presence:
+  there is no Dock icon (`LSUIElement`). Left-click restores the window;
+  right-click offers Open, Lock or Unlock, and Quit. Quit checkpoints sessions
+  and removes the vault key exactly like Command-Q.
 * **State lives where it is used.** The host list is owned by `HostStore`, open
   sessions by `SessionManager`, and the host being edited by `AppState`, so the
   menu commands and the views can never disagree about what is selected.

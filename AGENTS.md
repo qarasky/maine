@@ -50,7 +50,7 @@ swift tools/make-golden-vault.swift <password> app/src/test/resources/vault-gold
 
 | Area | Files | Role |
 | --- | --- | --- |
-| Entry, menus | `Sources/Maine/App/MaineApp.swift`, `App/AppState.swift` | Window state shared by menus and views; master-password gate on every launch |
+| Entry, menus | `Sources/Maine/App/MaineApp.swift`, `App/AppState.swift`, `App/MenuBarController.swift` | Window state shared by menus and views; master-password gate on every launch; the resident status item that restores the window |
 | Hosts | `Sources/Maine/Models/Host*.swift` | Host model, validation, vault-backed store |
 | Vault | `Sources/Maine/Services/PasswordStore.swift`, `LocalVaultKeyStore.swift` | Single active file `passwords.maine` (v2, AES-256-GCM + PBKDF2-SHA256); Keychain holds only the session helper key |
 | SSH | `Sources/Maine/Services/SSHTarget.swift`, `SSHConfigFile.swift`, `SSHAskPass.swift` | Builds the exact `ssh` command line; reads `~/.ssh/config`; supplies saved passwords |
@@ -89,6 +89,7 @@ Android (`apps/android`, Kotlin + Compose, minSdk 28):
 7. **Ad-hoc signing only.** Provisioned signing / Touch ID was implemented, then deliberately rolled back (weekly re-signing burden). Do not reintroduce without asking. Never invent entitlements or pick a signing certificate silently.
 8. **Diagnostics are metadata-only and opt-in.** Never log passwords, keystrokes, hostnames, usernames, custom session names, terminal contents or screenshots. Debug regions (`.debugRegion`) record geometry only.
 9. **Motion respects the OS.** All transitions/press feedback check Reduce Motion.
+10. **Menu bar resident.** Closing the window hides it; the app must keep running (no terminate-after-last-window, no automatic termination) and the vault stays unlocked until Quit or an explicit lock. The status item restores the window; there is no Dock icon.
 
 ## Working agreement
 

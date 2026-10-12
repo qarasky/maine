@@ -5,6 +5,7 @@ struct RootView: View {
     @EnvironmentObject private var store: HostStore
     @EnvironmentObject private var sessions: SessionManager
     @EnvironmentObject private var appState: AppState
+    @Environment(\.openWindow) private var openWindow
     @State private var initialized = false
 
     var body: some View {
@@ -21,12 +22,18 @@ struct RootView: View {
             // fitting size or a newly inserted error banner's ideal height.
             .frame(width: viewport.size.width, height: viewport.size.height, alignment: .topLeading)
             .toolbar(.hidden, for: .windowToolbar)
+            .background(MainWindowBridge().frame(width: 0, height: 0))
         }
         .frame(minWidth: 780, minHeight: 520)
         .debugRegion("root")
         .task {
             DebugDiagnostics.sessionManager = sessions
             DebugLog.shared.record("ui.root-task", fields: ["initialized": String(initialized)])
+            // The resident menu bar item must always be able to reach these
+            // objects, including after the window was closed and reopened.
+            MenuBarController.shared.configure(appState: appState, sessions: sessions) {
+                openWindow(id: "main")
+            }
             guard !initialized else { return }
             initialized = true
             appState.prepareForLaunch()
