@@ -10,6 +10,7 @@ final class MenuBarController: NSObject {
     static let shared = MenuBarController()
 
     private var statusItem: NSStatusItem?
+    private var closeKeyMonitor: Any?
     private weak var mainWindow: NSWindow?
     private weak var appState: AppState?
     private weak var sessions: SessionManager?
@@ -29,7 +30,28 @@ final class MenuBarController: NSObject {
             button.toolTip = "Maine"
             button.setAccessibilityLabel("Maine")
         }
+        // Command-W hides the window instead of closing it. A local monitor
+        // runs before menu key equivalents, so this also covers a standard
+        // Close command; ⇧⌘W (Close Session) and other combinations pass
+        // through untouched.
+        closeKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleCloseKey(event) ?? event
+        }
         statusItem = item
+    }
+
+    /// The close shortcut's rule, separated from the monitor so it can be
+    /// tested: exactly ⌘W with the window tracked; every other combination
+    /// (including ⇧⌘W) is returned to its normal handler.
+    func handleCloseKey(_ event: NSEvent) -> NSEvent? {
+        guard mainWindow != nil,
+              event.charactersIgnoringModifiers == "w",
+              event.modifierFlags.contains(.command),
+              event.modifierFlags.intersection([.shift, .option, .control]).isEmpty else {
+            return event
+        }
+        hideMainWindow()
+        return nil
     }
 
     /// Connects the resident UI to the vault and session state. Idempotent:
@@ -40,19 +62,34 @@ final class MenuBarController: NSObject {
         openMainWindow = openWindow
     }
 
-    /// Tracks the main window, including the nil that SwiftUI reports when it
-    /// destroys the window on close.
+    /// Tracks the main window and makes its close button hide it instead of
+    /// destroying it. Idempotent: it runs again if SwiftUI ever has to
+    /// recreate the window.
     func trackMainWindow(_ window: NSWindow?) {
         mainWindow = window
+        guard let window else { return }
+        let close = window.standardWindowButton(.closeButton)
+        close?.target = self
+        close?.action = #selector(hideMainWindow(_:))
     }
 
-    /// Brings the main window back, recreating it when it was closed.
+    /// Hides the window. The process, its sessions and the unlocked vault
+    /// keep running; the status item brings the same window back.
+    @objc func hideMainWindow(_ sender: Any? = nil) {
+        guard let mainWindow, mainWindow.isVisible else { return }
+        DebugLog.shared.record("ui.window-hidden")
+        mainWindow.orderOut(nil)
+    }
+
+    /// Brings the main window back, recreating it only if it was destroyed.
     func showMainWindow() {
-        openMainWindow?()
         if let mainWindow {
             if mainWindow.isMiniaturized { mainWindow.deminiaturize(nil) }
             mainWindow.makeKeyAndOrderFront(nil)
+        } else {
+            openMainWindow?()
         }
+        if NSApp.isHidden { NSApp.unhide(nil) }
         NSApp.activate()
     }
 

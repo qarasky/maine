@@ -173,6 +173,13 @@ final class MaineAppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// Maine outlives its window: closing it hides it so sessions and the
+    /// unlocked vault keep running. Quitting is explicit (⌘Q or the status
+    /// item's menu).
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         DebugLog.shared.record("application.quit", flush: true)
         try? PasswordStore.shared.lock()
