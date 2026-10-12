@@ -129,7 +129,7 @@ empty-state text, and backgrounding does not lock the vault.
 | Capability | macOS | Windows | Android |
 | --- | --- | --- | --- |
 | Emulator | SwiftTerm | xterm.js in WebView2 | vendored Termux terminal (patched `Transport`) |
-| Packaging | Swift package dependency | ❌ **xterm.js/lib not shipped; fetch script pins non-existent addon version** | ✅ module committed |
+| Packaging | Swift package dependency | ✅ fixed 2026-10-12: `fetch-xterm.sh` + `Terminal\lib\**\*` copy + CI check (§4.1) | ✅ module committed |
 | PTY / window size | `forkpty` | ConPTY + `ResizePseudoConsole` | SSH `window-change` (coalesced) |
 | One view per session, stay mounted | ✅ | ✅ | ✅ (emulator owned by session) |
 | State machine incl. deliberate-disconnect suppression | ✅ | ⚠️ exit-event race (§4.3) | ✅ |
@@ -184,6 +184,14 @@ empty-state text, and backgrounding does not lock the vault.
 **Fix:** pin `@xterm/addon-fit@0.11.0`, add
 `<None Include="Terminal\lib\**" CopyToOutputDirectory="PreserveNewest" />`,
 and add a CI check that the output contains `Terminal/lib/xterm.js`.
+
+**Status (2026-10-12):** fixed. `scripts/fetch-xterm.sh` now takes the two
+versions separately (`@xterm/xterm@5.5.0`, `@xterm/addon-fit@0.11.0`), copies
+`xterm.css` from its real `package/css` location, `Maine.App.csproj` copies
+`Terminal\lib\**\*` to the output, and the Windows CI job fails if any of the
+three assets is missing from the build output. Verified in a browser against
+the vendored files; the two packages' UMD globals (`Terminal`, `FitAddon`)
+match what `terminal.html` uses.
 
 ### 4.2 ❌ Restored scrollback is neither shown nor kept (high)
 

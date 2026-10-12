@@ -12,6 +12,8 @@ TestResults/
 *.user
 Maine.exe.WebView2/
 publish/
+# Fetched by apps/windows/scripts/fetch-xterm.sh for the WebView2 terminal
+apps/windows/src/Maine.App/Terminal/lib/
 
 # Android
 local.properties

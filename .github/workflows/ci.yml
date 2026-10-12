@@ -24,7 +24,11 @@ jobs:
 
   macos:
     name: macOS app (Swift)
-    runs-on: macos-15
+    # The macos-15 image tops out at Xcode 26.3, whose Swift Testing library
+    # crashes (SIGTRAP, "Index out of range") a few milliseconds into this
+    # suite before any test finishes. The same suite passes on Xcode 26.4+,
+    # so run where that toolchain is available.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - name: Select the newest Xcode (SwiftUI macros need Xcode 16+)
@@ -34,6 +38,10 @@ jobs:
           sudo xcode-select --switch "$XCODE/Contents/Developer"
           swift --version
       - name: Build and test
+        env:
+          # Force the Swift backtracer: its default is tuned for interactive
+          # terminals, and a CI crash without a stack is not diagnosable.
+          SWIFT_BACKTRACE: "enable=yes,symbolicate=yes"
         run: swift test
         working-directory: apps/macos
 
@@ -67,6 +75,17 @@ jobs:
       - name: Build full solution (Core + tests + WPF app)
         run: dotnet build Maine.sln --nologo
         working-directory: apps/windows
+      - name: Verify the terminal libraries are packaged
+        shell: bash
+        working-directory: apps/windows
+        run: |
+          for asset in xterm.js xterm.css xterm-addon-fit.js; do
+            found="$(find src/Maine.App/bin -path "*/Terminal/lib/$asset" -print -quit)"
+            if [ -z "$found" ]; then
+              echo "::error::Terminal/lib/$asset is missing from the build output"
+              exit 1
+            fi
+          done
       - name: Test Core on Windows (ACL + DPAPI-adjacent paths)
         run: dotnet test tests/Maine.Core.Tests/Maine.Core.Tests.csproj --nologo --no-build
         working-directory: apps/windows
@@ -80,7 +99,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
       - name: Install platform + build tools
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
       - name: Unit tests (JVM, no emulator; incl. Swift-generated golden vault)

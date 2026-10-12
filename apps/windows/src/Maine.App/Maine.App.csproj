@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <None Include="Terminal\terminal.html" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Terminal\lib\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
