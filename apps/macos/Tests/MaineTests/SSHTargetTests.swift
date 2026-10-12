@@ -99,10 +99,12 @@ struct SSHTargetTests {
 @Suite
 struct TerminalEnvironmentTests {
     private static var variables: [String: String] {
-        Dictionary(uniqueKeysWithValues: TerminalEnvironment.variables.map { line in
-            let parts = line.split(separator: "=", maxSplits: 1)
-            return (String(parts[0]), String(parts[1]))
-        })
+        TerminalEnvironment.variables.reduce(into: [:]) { values, line in
+            // Parse by hand: `split` drops a trailing empty piece, so an
+            // inherited variable with an empty value (KEY=) would crash it.
+            guard let separator = line.firstIndex(of: "=") else { return }
+            values[String(line[..<separator])] = String(line[line.index(after: separator)...])
+        }
     }
 
     @Test

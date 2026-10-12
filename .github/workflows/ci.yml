@@ -24,11 +24,7 @@ jobs:
 
   macos:
     name: macOS app (Swift)
-    # The macos-15 image tops out at Xcode 26.3, whose Swift Testing library
-    # crashes (SIGTRAP, "Index out of range") a few milliseconds into this
-    # suite before any test finishes. The same suite passes on Xcode 26.4+,
-    # so run where that toolchain is available.
-    runs-on: macos-26
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Select the newest Xcode (SwiftUI macros need Xcode 16+)
@@ -41,6 +37,8 @@ jobs:
         env:
           # Force the Swift backtracer: its default is tuned for interactive
           # terminals, and a CI crash without a stack is not diagnosable.
+          # This is how the empty-environment crash behind the 2026-10-12
+          # macOS failures was found.
           SWIFT_BACKTRACE: "enable=yes,symbolicate=yes"
         run: swift test
         working-directory: apps/macos

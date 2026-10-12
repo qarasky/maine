@@ -151,7 +151,14 @@ public static class TerminalEnvironment
 
     public static Dictionary<string, string> Variables()
     {
-        var environment = new Dictionary<string, string>(StringComparer.Ordinal);
+        // Windows environment variable names are case-insensitive (PATH is
+        // usually "Path"); Unix names are case-sensitive. Matching the host
+        // keeps Maine's own variables from duplicating inherited ones and
+        // makes lookups like values["PATH"] behave the way callers expect.
+        var comparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+        var environment = new Dictionary<string, string>(comparer);
         foreach (System.Collections.DictionaryEntry kv in Environment.GetEnvironmentVariables())
         {
             if (kv.Key is string k && kv.Value is string v)
