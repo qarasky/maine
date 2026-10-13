@@ -1,0 +1,5 @@
+# Build products
+target/
+
+# Default data directory when running from this folder
+data/
