@@ -4,15 +4,16 @@ Instructions for AI coding agents working in this repository. Humans use `README
 
 ## What this is
 
-Maine is a local-first SSH client for macOS (Swift 6, SwiftUI, macOS 14+), Windows (C#, WPF, .NET 8) and Android (Kotlin, Compose, SDK 28+). Swift package at `apps/macos` with one dependency (SwiftTerm); .NET solution at `apps/windows` (`Maine.Core` has no UI dependencies); Gradle project at `apps/android` (sshj for SSH, Compose for UI, and a vendored Termux terminal module for emulation). No backend, no sync, no telemetry. Shared cross-client contract lives in `packages/schema`, not shared code — except the vault envelope, which every client implements byte-for-byte so the file is portable.
+Maine is a local-first SSH client for macOS (Swift 6, SwiftUI, macOS 14+), Windows (C#, WPF, .NET 8) and Android (Kotlin, Compose, SDK 28+). Swift package at `apps/macos` with one dependency (SwiftTerm); .NET solution at `apps/windows` (`Maine.Core` has no UI dependencies); Gradle project at `apps/android` (sshj for SSH, Compose for UI, and a vendored Termux terminal module for emulation); Rust crate at `apps/sync-server` for optional sync. Sync is self-hosted: no accounts, no cloud service, no telemetry. Shared cross-client contract lives in `packages/schema`, not shared code — except the vault envelope, which every client implements byte-for-byte so the file is portable.
 
 ```
 maine/
 ├── apps/macos/     The app: Sources/Maine, Tests/MaineTests, scripts/, Resources/
 ├── apps/windows/   WPF + C# client: src/Maine.Core, src/Maine.App, tests/
 ├── apps/android/   Kotlin + Compose client: app/src/{main,test}, terminal/, tools/, README.md
+├── apps/sync-server/ Rust sync server: src/, tests/, scripts/smoke.sh, README.md
 ├── packages/schema/ Versioned JSON config format + Python validator
-├── docs/           architecture.md, macos-design.md, images/
+├── docs/           architecture.md, macos-design.md, sync-protocol.md, sync-client.md, images/
 └── README.md
 ```
 
@@ -44,6 +45,15 @@ Run Android commands from `apps/android` (JDK 17+, Android SDK with platform 36;
 ./gradlew :app:testDebugUnitTest              # JVM unit tests (48 tests)
 ./gradlew :app:assembleDebug                  # debug APK
 swift tools/make-golden-vault.swift <password> app/src/test/resources/vault-golden-v2.json
+```
+
+Run sync-server commands from `apps/sync-server` (any recent stable Rust; no other system dependencies):
+
+```sh
+cargo test                                    # unit + HTTP integration (26 tests)
+scripts/smoke.sh                              # the protocol end to end with curl
+cargo run --release                           # 127.0.0.1:8484, data in ./data
+cargo clippy --all-targets && cargo fmt --check
 ```
 
 ## Architecture map
@@ -78,6 +88,16 @@ Android (`apps/android`, Kotlin + Compose, minSdk 28):
 | Terminal | `terminal/` (vendored Termux, Apache-2.0), `session/SshTerminal.kt`, `ui/TerminalSurface.kt`, `ui/ExtraKeysRow.kt` | Real VT/xterm emulator; SSH bytes drive it through a `Transport` instead of a PTY; the view is the input surface, with an on-screen ESC/CTRL/ALT/TAB/arrow row |
 | Tests | `app/src/test/` | Validation, format refusal, ssh args, config reader, vault roundtrip + Swift-generated golden fixture |
 
+Sync server (`apps/sync-server`, Rust + axum + embedded SQLite):
+
+| Area | Files | Role |
+| --- | --- | --- |
+| HTTP surface | `src/api.rs` | `/v1` endpoints, token auth, conditional writes, error shapes; the contract is `docs/sync-protocol.md` |
+| Storage | `src/db.rs` | Slots, version history (keep 32), retention pruning; blobs are never parsed |
+| Tokens | `src/token.rs` | 256-bit tokens, unambiguous display form, normalization, SHA-256 lookup only |
+| Config, entry | `src/config.rs`, `src/main.rs` | Flags/env (`MAINE_SYNC_*`), bind loopback by default, optional create secret |
+| Tests | `tests/http.rs`, `scripts/smoke.sh` | Real HTTP against a real server; curl smoke test of the whole protocol |
+
 ## Invariants — do not break these
 
 1. **Master password on every launch.** `prepareForLaunch()` always locks; password input is disabled while locked. There is no "remember me".
@@ -87,7 +107,7 @@ Android (`apps/android`, Kotlin + Compose, minSdk 28):
 5. **Terminals stay mounted.** Switching sessions must never reparent a terminal NSView. Layout is bounded by the window viewport — terminal fitting size or banners must not grow the split view (this was a real shipped regression: exit-255 overflow).
 6. **Sidebar-only navigation.** No tab bar, no window title/toolbar, no All Hosts page. Entire sidebar rows are clickable; hover and selection share identical boundaries.
 7. **Ad-hoc signing only.** Provisioned signing / Touch ID was implemented, then deliberately rolled back (weekly re-signing burden). Do not reintroduce without asking. Never invent entitlements or pick a signing certificate silently.
-8. **Diagnostics are metadata-only and opt-in.** Never log passwords, keystrokes, hostnames, usernames, custom session names, terminal contents or screenshots. Debug regions (`.debugRegion`) record geometry only.
+8. **Diagnostics are metadata-only and opt-in.** Never log passwords, keystrokes, hostnames, usernames, custom session names, terminal contents or screenshots. Debug regions (`.debugRegion`) record geometry only. The sync server obeys the same rule: request logs are method/path/status at debug level, never tokens, headers or bodies.
 9. **Motion respects the OS.** All transitions/press feedback check Reduce Motion.
 10. **Menu bar resident.** Closing the window hides it; the app must keep running (no terminate-after-last-window, no automatic termination) and the vault stays unlocked until Quit or an explicit lock. The status item restores the window; there is no Dock icon.
 
@@ -98,4 +118,4 @@ Android (`apps/android`, Kotlin + Compose, minSdk 28):
 - **Docs travel with behavior.** Update `README.md` and `docs/architecture.md` (plus `docs/macos-design.md` for layout changes) in the same change.
 - **Icons are scripted.** `scripts/render-mark.swift` generates the active M monogram; `render-icon.swift` (prompt mark) is kept for future use. Rebuild `.icns` with `sips` + `iconutil` per the script headers; never commit ad-hoc binaries outside `Resources/`.
 - **Git hygiene.** `build/` and `.build/` are ignored — never force-add them. Commit only when asked; never push unless asked.
-- **Ask before expanding scope.** Pre-written commands, sync, key management and new platforms are explicitly on hold / not planned.
+- **Ask before expanding scope.** Pre-written commands, key management, hosted sync/accounts and new platforms are explicitly on hold / not planned. The self-hosted sync server exists; client-side sync work is planned but not started.

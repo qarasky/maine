@@ -103,3 +103,24 @@ jobs:
       - name: Unit tests (JVM, no emulator; incl. Swift-generated golden vault)
         run: ./gradlew :app:testDebugUnitTest --console=plain
         working-directory: apps/android
+
+  sync-server:
+    name: Sync server (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/sync-server
+      - name: Format
+        run: cargo fmt --check
+        working-directory: apps/sync-server
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: apps/sync-server
+      - name: Test (unit + HTTP integration against a real server)
+        run: cargo test --locked
+        working-directory: apps/sync-server

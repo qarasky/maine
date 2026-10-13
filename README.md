@@ -6,9 +6,9 @@
 [![Swift 6](https://img.shields.io/badge/Swift-6-5263ff?style=flat-square)](https://www.swift.org/)
 [![SSH: system OpenSSH](https://img.shields.io/badge/SSH-system_OpenSSH-5263ff?style=flat-square)](https://www.openssh.com/)
 
-**Save a host, open it, get a real terminal. No accounts, no cloud, no telemetry.**
+**Save a host, open it, get a real terminal. No accounts, no telemetry — and sync is a server you host.**
 
-Maine is a small, local-first SSH client for macOS. It keeps hosts and passwords together in one master-password-encrypted file, opens sessions by running the system `ssh` client you already trust, and reconnects your sessions automatically after unlock. There is no backend, no sync, and no telemetry.
+Maine is a small, local-first SSH client for macOS. It keeps hosts and passwords together in one master-password-encrypted file, opens sessions by running the system `ssh` client you already trust, and reconnects your sessions automatically after unlock. There is no cloud of ours and no telemetry: sync is optional, self-hosted, and the server only ever sees encrypted bytes.
 
 [Quick start](#quickstart) · [What's in the vault](#whats-in-the-vault) · [Build from source](#build-and-develop)
 
@@ -34,7 +34,7 @@ Plain `ssh` is great if you live in a terminal. Maine is for everything around i
 
 ## Why not another SSH client?
 
-Maine has no accounts, no cloud, no sync and no telemetry — there is nothing to sign up for and nothing that phones home. It never hides what it runs: the connection header shows the endpoint, and its tooltip shows the exact `ssh` command line. Hosts, passwords and session snapshots live in one portable encrypted file, not a proprietary sync service.
+Maine has no accounts, no telemetry and no service of ours — nothing to sign up for and nothing that phones home. Optional sync runs on a server you host yourself. It never hides what it runs: the connection header shows the endpoint, and its tooltip shows the exact `ssh` command line. Hosts, passwords and session snapshots live in one portable encrypted file, not a proprietary sync service.
 
 ## What's in the vault
 
@@ -43,6 +43,19 @@ Maine has no accounts, no cloud, no sync and no telemetry — there is nothing t
 To share or move hosts and passwords, choose **Host → Show Encrypted Vault** and copy **only `passwords.maine`**. Quit Maine on the receiving Mac, back up its existing files, then place the copy in its Maine Application Support directory. Open Maine and choose **Host → Unlock Password Vault**. Send the master password separately, not alongside the files. Host IDs must remain unchanged, and sharing the vault grants access to all passwords in that file. This is file sharing, not automatic sync or merging. A forgotten master password cannot be recovered on another Mac.
 
 On the first successful unlock, old `hosts.json` and version-1 passwords migrate into the unified vault. Malformed input and wrong passwords never overwrite it. For recovery, the original `hosts.json` and `passwords.maine.v1-backup` are retained and are no longer used after migration. **The old `hosts.json` is still plaintext:** after verifying your migrated data, remove or securely archive it yourself.
+
+## Sync (optional, self-hosted)
+
+Maine never talks to a server of ours. If you want the same vault on several machines, run the small Rust sync server that ships in `apps/sync-server` and pair each device with one token:
+
+```sh
+cd apps/sync-server
+cargo run --release        # listening on 127.0.0.1:8484, data in ./data
+```
+
+The first device creates a slot and receives a token like `maine-2F7K-9QX2-…`; every other device enters the same token and the vault's master password. The server stores the encrypted `passwords.maine` file byte for byte and never sees a hostname, a credential, a password or the token itself — only `SHA-256(token)`, sizes and timestamps. Writes are conditional, so a device that is behind gets a conflict copy instead of silently overwriting the other side, and the last 32 versions of each slot are kept for recovery. The wire contract is [docs/sync-protocol.md](docs/sync-protocol.md); the client-side checklist is [docs/sync-client.md](docs/sync-client.md).
+
+The server is finished; the macOS, Windows and Android clients do not speak to it yet. [apps/sync-server/README.md](apps/sync-server/README.md) covers deployment: reverse-proxy TLS, systemd, Docker, and the `--create-secret` switch for servers that are reachable by strangers.
 
 ## Saved sessions
 
@@ -97,7 +110,15 @@ cd packages/schema
 python3 tools/validate.py
 ```
 
-GitHub Actions runs all of this on every push to `main` and every pull request — the schema validator, `swift test`, and the Windows Core build/tests plus the full WPF solution build (see `.github/workflows/ci.yml`).
+The sync server is a Rust crate with its own suite — unit tests plus HTTP integration tests against a real server on a loopback port — and a curl smoke test of the whole protocol:
+
+```sh
+cd apps/sync-server
+cargo test
+scripts/smoke.sh
+```
+
+GitHub Actions runs all of this on every push to `main` and every pull request — the schema validator, `swift test`, the Windows Core build/tests plus the full WPF solution build, the Android JVM unit tests, and the sync server's Rust tests, lint and formatting (see `.github/workflows/ci.yml`).
 
 Repository layout:
 
@@ -106,10 +127,11 @@ maine/
 ├── apps/
 │   ├── macos/              Swift + SwiftUI application
 │   ├── windows/            WPF + C# application (.NET 8)
-│   └── android/            Kotlin + Compose application (vault parity, real terminal)
+│   ├── android/            Kotlin + Compose application (vault parity, real terminal)
+│   └── sync-server/        Rust sync server (zero-knowledge vault slots)
 ├── packages/
 │   └── schema/           Versioned JSON configuration format + validator
-├── docs/                 architecture.md, macos-design.md, images/
+├── docs/                 architecture.md, macos-design.md, sync-protocol.md, sync-client.md, images/
 └── README.md
 ```
 
@@ -132,8 +154,10 @@ The macOS application is the first client, and it is at version 1.0.0:
 | Saved passwords, portable encrypted vault, master-password unlock | done |
 | Windows client (WPF + C#, portable vault, ConPTY sessions) | in progress |
 | Android client (vault parity, host CRUD, real terminal) | in progress |
+| Self-hosted sync server (Rust, zero-knowledge slots) | done |
+| Sync in the clients | not started |
 | Linux client | not started |
-| Sync, accounts, key management | not planned |
+| Accounts, hosted service, key management | not planned |
 
 ## License
 

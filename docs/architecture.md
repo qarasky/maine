@@ -19,8 +19,9 @@ maine/
 ├── apps/macos/          the macOS client: Swift, SwiftUI, AppKit
 ├── apps/windows/        the Windows client: C#, WPF, ConPTY, WebView2 + xterm.js
 ├── apps/android/        the Android client: Kotlin, Compose, sshj
+├── apps/sync-server/    the sync server: Rust, axum, embedded SQLite
 ├── packages/schema/     the shared, language-neutral configuration format
-├── docs/                this document
+├── docs/                this document, the sync documents
 └── README.md
 ```
 
@@ -290,6 +291,36 @@ reconnects automatically with history as scrollback (never replayed). The
 terminal UI is deliberately a stub for now — scrollback text plus an input
 row — with full terminal emulation replacing only the output view later.
 
+## The sync server
+
+`apps/sync-server` is a Rust crate (axum + embedded SQLite) that implements
+the optional sync feature: a zero-knowledge store for the encrypted vault.
+The wire contract is [`sync-protocol.md`](sync-protocol.md); the client-side
+checklist, including the workspaces design, is
+[`sync-client.md`](sync-client.md).
+
+One decision keeps the server small: it is a dumb slot store, not a service.
+
+* A **token** is both the address of a slot and the credential for it. The
+  server stores only `SHA-256(token)` and shows the token once, at creation.
+  It never sees a master password, plaintext, a hostname or a session.
+* The blob is the exact `passwords.maine` file. The server never parses,
+  decrypts, transforms or merges anything.
+* Writes are conditional on the version the client last saw (`If-Match`);
+  a stale write is a `409` and the client resolves it locally by keeping a
+  conflict copy. The server keeps the last 32 versions of each slot for
+  recovery.
+* One binary, one SQLite file, plain HTTP on loopback by default. TLS is the
+  reverse proxy's job, which also makes "sync over Tailscale without TLS" a
+  supported, honest configuration. An optional create secret gates slot
+  creation on instances that strangers can reach.
+
+Sync is not implemented in any client yet. When it is, the load-bearing rule
+is that syncing must never reparent a terminal: a pulled vault is adopted
+with the same rules as a local one — the file is replaced atomically,
+sessions whose hosts disappeared are closed, and history is restored as
+scrollback, never replayed as commands.
+
 ## Testing strategy
 
 Tests are written with Swift Testing and run with `swift test`. They cover the
@@ -303,6 +334,10 @@ parts where being wrong is expensive:
 * the `~/.ssh/config` reader, including `Include`, comments and wildcards;
 * the PTY session lifecycle — start, receive output, exit with a code, and
   disconnect — using a real child process;
+* the sync server's protocol — create, conditional pull, conflict, rotation,
+  retention and deletion — over real HTTP against a real SQLite file
+  (`cargo test` in `apps/sync-server`), plus a curl smoke script that runs
+  the whole protocol end to end;
 * visible, full-window layout after both an unexpected exit 255 and an intentional
   disconnect returning 255, including resizing. These tests assert that the
   split view fits within the window and that the header, banner and terminal
@@ -320,3 +355,5 @@ failure-prone part of the app is covered without needing a network.
 * No port forwarding UI, no SFTP, no key management, no known-hosts editing.
   Those are all handled by `~/.ssh/config` today, and adding a second place to
   configure them would be a step backwards.
+* Sync requires a server the user runs; there is no hosted option, and no
+  client implements the sync protocol yet.

@@ -5,9 +5,10 @@ versioned JSON, it is deliberately small, and it is the contract between every
 Maine client — the macOS application today, and the Windows, Linux and Android
 clients later.
 
-Nothing else is shared between clients. There is no account, no sync service and
-no database; a client writes this file, reads it back, and that is the whole
-storage story.
+Nothing else is shared between clients. There is no account and no service of
+ours; a client writes this file, reads it back, and that is the whole local
+storage story. Optional sync moves the *encrypted vault*, never this file:
+the server sees only opaque bytes and this format is always written locally.
 
 ## Where the file lives
 
@@ -18,7 +19,8 @@ storage story.
 | Windows  | `%APPDATA%\Maine\hosts.json` (planned)               |
 | Android  | app-private `passwords.maine` vault (no plaintext file) |
 
-Each client owns its own file. Maine never syncs between machines.
+Each client owns its own file. Sync, when enabled, moves the encrypted vault as
+an opaque blob and never this plaintext format.
 
 ## The file
 
