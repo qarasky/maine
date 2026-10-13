@@ -232,8 +232,14 @@ public struct PasswordStore: Sendable {
 
     private func read() throws -> Vault? {
         guard exists else { return nil }
+        return try decodeVault(from: Data(contentsOf: fileURL))
+    }
+
+    /// Structural validation shared by `read()` and the sync helpers. It never
+    /// touches the file or the Keychain.
+    private func decodeVault(from data: Data) throws -> Vault {
         do {
-            let vault = try JSONDecoder().decode(Vault.self, from: Data(contentsOf: fileURL))
+            let vault = try JSONDecoder().decode(Vault.self, from: data)
             guard [1, 2].contains(vault.version), vault.salt.count == 32,
                   vault.iterations == Self.iterations,
                   (vault.version == 1 || (vault.payload != nil && vault.passwords.isEmpty)),
@@ -244,12 +250,53 @@ public struct PasswordStore: Sendable {
         } catch { throw VaultError.invalidFile }
     }
 
+    /// True when the current session key opens `data` as one of this vault's
+    /// versions. Sync calls this before adopting a remote blob; it never
+    /// writes, migrates or remembers anything.
+    public func sessionKeyOpens(_ data: Data) -> Bool {
+        guard let vault = try? decodeVault(from: data),
+              let keyData = try? keys.key(for: vault.id), keyData.count == 32 else { return false }
+        let key = SymmetricKey(data: keyData)
+        guard let marker = try? open(vault.verification, key: key, context: vault.context) else { return false }
+        return marker == Self.marker
+    }
+
+    /// Validates `data` as a full vault encrypted with `masterPassword`,
+    /// without touching this instance's file or Keychain state. Throws
+    /// `.invalidPassword` when the password does not open it and
+    /// `.invalidFile` when it is not a vault this client understands.
+    public func validate(_ data: Data, masterPassword: String) throws {
+        let vault = try decodeVault(from: data)
+        let key = try derive(masterPassword, salt: vault.salt, iterations: vault.iterations)
+        let marker: Data
+        do {
+            marker = try open(vault.verification, key: key, context: vault.context)
+        } catch {
+            throw VaultError.invalidPassword
+        }
+        guard marker == Self.marker else { throw VaultError.invalidPassword }
+        do {
+            for (hostID, payload) in vault.passwords {
+                let plain = try open(payload, key: key, context: vault.context + Data(hostID.utf8))
+                guard String(data: plain, encoding: .utf8) != nil else { throw VaultError.invalidFile }
+            }
+            if vault.version == 2 { _ = try decodeContents(vault, key: key) }
+        } catch let error as VaultError {
+            throw error
+        } catch {
+            throw VaultError.invalidFile
+        }
+    }
+
     private func write(_ vault: Vault) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try encoder.encode(vault).write(to: fileURL, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        // Sync listens for local vault writes to schedule a push. Adopting a
+        // remote blob writes the file directly, so this cannot loop.
+        NotificationCenter.default.post(name: .maineVaultDidWrite, object: nil)
     }
 
     private func derive(_ password: String, salt: Data, iterations: Int) throws -> SymmetricKey {
@@ -280,4 +327,11 @@ public struct PasswordStore: Sendable {
     private func open(_ data: Data, key: SymmetricKey, context: Data) throws -> Data {
         try AES.GCM.open(AES.GCM.SealedBox(combined: data), using: key, authenticating: context)
     }
+}
+
+public extension Notification.Name {
+    /// Posted after the local vault file is written. Sync schedules a push
+    /// from this; adopting a remote blob writes the file directly, so the
+    /// notification cannot loop. It carries no user data.
+    static let maineVaultDidWrite = Notification.Name("app.maine.vault-did-write")
 }

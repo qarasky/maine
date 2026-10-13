@@ -5,6 +5,7 @@ struct HostListView: View {
     @EnvironmentObject private var store: HostStore
     @EnvironmentObject private var sessions: SessionManager
     @EnvironmentObject private var appState: AppState
+    @ObservedObject private var sync = SyncCoordinator.shared
 
     @State private var filter = ""
     @State private var renamingSessionID: UUID?
@@ -379,6 +380,11 @@ struct HostListView: View {
             .help("New host")
 
             Spacer(minLength: 0)
+
+            if let profile = sync.activeProfile {
+                SyncStatusDot(status: sync.status)
+                    .help("\(profile.name): \(sync.status.label)")
+            }
 
             Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0")
                 .font(.system(size: 11))

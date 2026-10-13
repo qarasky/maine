@@ -33,6 +33,13 @@ jobs:
           echo "Using $XCODE"
           sudo xcode-select --switch "$XCODE/Contents/Developer"
           swift --version
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/sync-server
+      - name: Build the sync server for the client integration tests
+        run: cargo build --release --locked
+        working-directory: apps/sync-server
       - name: Build and test
         env:
           # Force the Swift backtracer: its default is tuned for interactive
@@ -40,6 +47,9 @@ jobs:
           # This is how the empty-environment crash behind the 2026-10-12
           # macOS failures was found.
           SWIFT_BACKTRACE: "enable=yes,symbolicate=yes"
+          # Enables SyncServerIntegrationTests: the macOS client against the
+          # real Rust server.
+          MAINE_SYNC_SERVER_BIN: ${{ github.workspace }}/apps/sync-server/target/release/maine-sync-server
         run: swift test
         working-directory: apps/macos
 

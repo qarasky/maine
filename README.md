@@ -55,7 +55,9 @@ cargo run --release        # listening on 127.0.0.1:8484, data in ./data
 
 The first device creates a slot and receives a token like `maine-2F7K-9QX2-…`; every other device enters the same token and the vault's master password. The server stores the encrypted `passwords.maine` file byte for byte and never sees a hostname, a credential, a password or the token itself — only `SHA-256(token)`, sizes and timestamps. Writes are conditional, so a device that is behind gets a conflict copy instead of silently overwriting the other side, and the last 32 versions of each slot are kept for recovery. The wire contract is [docs/sync-protocol.md](docs/sync-protocol.md); the client-side checklist is [docs/sync-client.md](docs/sync-client.md).
 
-The server is finished; the macOS, Windows and Android clients do not speak to it yet. [apps/sync-server/README.md](apps/sync-server/README.md) covers deployment: reverse-proxy TLS, systemd, Docker, and the `--create-secret` switch for servers that are reachable by strangers.
+**macOS implements the client:** **Maine → Settings… → Sync** creates or joins a slot, and from then on the vault pulls when it unlocks, pushes a couple of seconds after an edit, polls while it is open, and stops syncing when it locks. A pairing's token lives in the login Keychain, not in the vault, so it survives the vault being replaced by the server's copy. Conflicts never lose data: the losing side is kept as `passwords.conflict-….maine` next to the vault. Windows and Android do not speak the protocol yet.
+
+[apps/sync-server/README.md](apps/sync-server/README.md) covers deployment: reverse-proxy TLS, systemd, Docker, and the `--create-secret` switch for servers that are reachable by strangers.
 
 ## Saved sessions
 
@@ -155,7 +157,8 @@ The macOS application is the first client, and it is at version 1.0.0:
 | Windows client (WPF + C#, portable vault, ConPTY sessions) | in progress |
 | Android client (vault parity, host CRUD, real terminal) | in progress |
 | Self-hosted sync server (Rust, zero-knowledge slots) | done |
-| Sync in the clients | not started |
+| Sync in the macOS client (create/join, conflict copies, workspaces) | done |
+| Sync in the Windows and Android clients | not started |
 | Linux client | not started |
 | Accounts, hosted service, key management | not planned |
 

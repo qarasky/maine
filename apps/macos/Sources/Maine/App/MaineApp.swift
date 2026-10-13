@@ -34,8 +34,7 @@ struct MaineApp: App {
         .defaultSize(width: 1080, height: 720)
         .windowStyle(.hiddenTitleBar)
         .commands {
-            CommandGroup(after: .textEditing) {
-                Button("Search Hosts") { NotificationCenter.default.post(name: .maineFocusSearch, object: nil) }
+            CommandGroup(after: .textEditing) {                Button("Search Hosts") { NotificationCenter.default.post(name: .maineFocusSearch, object: nil) }
                     .keyboardShortcut("f", modifiers: .command)
             }
             CommandMenu("Host") {
@@ -108,6 +107,10 @@ struct MaineApp: App {
                 }
             }
         }
+
+        Settings {
+            SyncSettingsView()
+        }
     }
 
     // MARK: - Menu actions
@@ -155,6 +158,11 @@ final class MaineAppDelegate: NSObject, NSApplicationDelegate {
             alert.informativeText = error.localizedDescription + "\nMaine will stay open so you can retry."
             alert.runModal()
             return .terminateCancel
+        }
+        // Sync gets one short best-effort push before the process ends.
+        if SyncCoordinator.shared.wantsFlushBeforeQuit {
+            SyncCoordinator.shared.flushBeforeQuit { sender.reply(toApplicationShouldTerminate: true) }
+            return .terminateLater
         }
         return .terminateNow
     }

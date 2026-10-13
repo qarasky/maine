@@ -123,6 +123,7 @@ Five layers, one file each, each testable without the others:
 | Layer | Files | Responsibility |
 | ----- | ----- | -------------- |
 | App | `App/MaineApp.swift`, `App/AppState.swift`, `App/MenuBarController.swift` | Entry point, menu commands, the menu bar item that keeps the app resident, and the window-level UI state the menus and views share. |
+| Sync | `Sync/SyncProfileStore.swift`, `Sync/SyncEngine.swift`, `Sync/SyncTransport.swift`, `Sync/SyncCoordinator.swift` | Profiles and Keychain tokens; the whole-file create/join/pull/push algorithms with conflict copies; HTTP; triggers, polling and workspace switching. |
 | Models | `Models/Host.swift`, `Models/HostConfiguration.swift`, `Models/HostStore.swift` | The host, the versioned file format, and the store that owns the file on disk. |
 | Services | `Services/SSHTarget.swift`, `Services/SSHConfigFile.swift` | Building the `ssh` invocation, and reading (never writing) `~/.ssh/config`. |
 | Sessions | `Sessions/TerminalSession.swift`, `Sessions/SessionManager.swift` | One PTY session per host, and which sessions are open. |
@@ -321,11 +322,27 @@ One decision keeps the server small: it is a dumb slot store, not a service.
   supported, honest configuration. An optional create secret gates slot
   creation on instances that strangers can reach.
 
-Sync is not implemented in any client yet. When it is, the load-bearing rule
-is that syncing must never reparent a terminal: a pulled vault is adopted
-with the same rules as a local one — the file is replaced atomically,
-sessions whose hosts disappeared are closed, and history is restored as
-scrollback, never replayed as commands.
+Sync is implemented in the macOS client (`Sync/`): **Settings → Sync** creates a
+slot (this device becomes the origin and the token is shown once) or joins one
+(token plus the remote vault's master password, verified before anything on
+disk changes). After that the coordinator pulls when the vault unlocks, pushes
+a couple of seconds after any vault write, polls with `HEAD` every 30 seconds,
+backs off when the server is unreachable, and makes one best-effort push on
+lock and quit. The token lives in the login Keychain (service `Maine Sync`),
+never in the vault, so it survives the vault being replaced by the server's
+copy. `lastVersion` and the last synced hash let a no-op save skip the push
+entirely.
+
+The load-bearing rule holds: a pulled vault is adopted with the same rules as
+a local one. The file is replaced atomically, a dirty local file is kept as
+`passwords.conflict-….maine` first, sessions whose hosts disappeared are
+closed without deleting their records, surviving terminals are never
+reparented or restarted, and history is restored as scrollback, never replayed
+as commands. Several profiles can be paired, but exactly one is active; the
+others keep their own vault as `passwords.workspace-<id>.maine` and switching
+flushes, closes sessions and asks for the target vault's master password.
+
+Windows and Android do not speak the protocol yet.
 
 ## Testing strategy
 
@@ -344,6 +361,11 @@ parts where being wrong is expensive:
   retention and deletion — over real HTTP against a real SQLite file
   (`cargo test` in `apps/sync-server`), plus a curl smoke script that runs
   the whole protocol end to end;
+* the sync client's algorithms against a programmable fake transport — the
+  create/join/pull/push/conflict paths, conflict copies, foreign-vault
+  refusal, permissions — and one end-to-end test that runs the macOS client
+  against the real server binary (`SyncServerIntegrationTests`, enabled by
+  `MAINE_SYNC_SERVER_BIN`; CI builds the server first);
 * visible, full-window layout after both an unexpected exit 255 and an intentional
   disconnect returning 255, including resizing. These tests assert that the
   split view fits within the window and that the header, banner and terminal
@@ -361,5 +383,5 @@ failure-prone part of the app is covered without needing a network.
 * No port forwarding UI, no SFTP, no key management, no known-hosts editing.
   Those are all handled by `~/.ssh/config` today, and adding a second place to
   configure them would be a step backwards.
-* Sync requires a server the user runs; there is no hosted option, and no
-  client implements the sync protocol yet.
+* Sync requires a server the user runs; there is no hosted option. The macOS
+  client implements the protocol; Windows and Android do not yet.

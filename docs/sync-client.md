@@ -1,9 +1,10 @@
 # Sync client implementation guide
 
 The server and its wire contract ([`sync-protocol.md`](sync-protocol.md)) are
-done. No client implements sync yet. This file is the checklist for the client
-phase: what to store, when to talk to the server, exactly how to resolve
-conflicts, and how "workspaces" (several tokens on one device) should behave.
+done, and **the macOS client implements this guide** (`Sources/Maine/Sync/`).
+Windows and Android have not started. This file remains the specification:
+what to store, when to talk to the server, exactly how to resolve conflicts,
+and how "workspaces" (several tokens on one device) should behave.
 
 Read the protocol document first; this one assumes it.
 
@@ -269,3 +270,13 @@ Small, deliberate choices that are better made with UI in front of you:
 - Whether `lastSyncedAt`/version metadata lives in preferences or a small
   sidecar JSON; preferences are fine for v1.
 - The wording of the token-loss warning in the rotate dialog.
+
+**Resolved on macOS (2026-10-13):** conflict copies are
+`passwords.conflict-<YYYYMMDD-HHMMSS>.maine` and the banner is the app's
+standard alert; the sidebar footer and Settings both show a status dot with
+the vocabulary "Synced / Syncing… / offline message / Token rejected /
+conflict copy name / failure message"; profiles are named, and switched, in
+**Settings → Sync** (switching flushes, closes sessions and asks for the
+target vault's master password); `lastVersion`, `lastSHA256` and `lastSyncedAt`
+live in preferences; and the rotate dialog carries the token-loss warning
+from the section above.

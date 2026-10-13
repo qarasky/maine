@@ -3,8 +3,8 @@
 A small, self-hosted, zero-knowledge sync server for the Maine SSH client. It
 stores one opaque blob per slot — the encrypted `passwords.maine` vault, byte
 for byte — and never sees a hostname, a credential, a master password or a
-token. Clients are not implemented yet; this is the server plus the protocol
-they will speak.
+token. The macOS client implements the protocol (Maine → Settings → Sync);
+Windows and Android are not there yet.
 
 - One token = one slot. The token is both the address and the credential,
   like a wallet seed: whoever holds it can read and replace the slot's bytes.

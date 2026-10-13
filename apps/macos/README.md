@@ -59,6 +59,7 @@ apps/macos/
 │   ├── Models/              Host, the versioned configuration, the store
 │   ├── Services/            ssh command building, ~/.ssh/config reading
 │   ├── Sessions/            PTY sessions and the session manager
+│   ├── Sync/                sync profiles, engine, transport, coordinator
 │   └── Views/               SwiftUI views
 └── Tests/MaineTests/        Swift Testing suites
 ```
@@ -82,12 +83,24 @@ together and why they are arranged that way.
 * **Xcode is required to build.** Not for the app's own code, but for SwiftUI's
   macros; see Requirements above.
 
+## Sync
+
+Optional and self-hosted: **Settings → Sync** (⌘,) creates or joins a slot on a
+sync server you run (`apps/sync-server`). While the vault is unlocked, the
+active profile pulls on unlock, pushes two seconds after an edit, polls with
+`HEAD` every 30 seconds, and makes a best-effort push on lock or quit.
+Conflicts never lose data: the losing side is kept as
+`passwords.conflict-….maine` before the server's copy is adopted. The wire
+contract is `docs/sync-protocol.md`; the client checklist is
+`docs/sync-client.md`.
+
 ## Where things are stored
 
 | What | Where |
 | ---- | ----- |
 | Saved hosts, passwords, session snapshots | `~/Library/Application Support/Maine/passwords.maine` (encrypted) |
 | Remembered local vault key | macOS login Keychain |
+| Sync tokens | macOS login Keychain, service `Maine Sync`, keyed by profile ID |
 | Opt-in debug logs | `~/Library/Logs/Maine/debug.jsonl` and `debug.previous.jsonl` |
 | Keys, known hosts, ssh options | `~/.ssh`, untouched by Maine |
 

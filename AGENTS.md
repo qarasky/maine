@@ -22,7 +22,9 @@ maine/
 Run app commands from `apps/macos`:
 
 ```sh
-swift test                                   # full suite (Swift Testing, ~84 tests)
+swift test                                   # full suite (Swift Testing, includes sync engine tests)
+MAINE_SYNC_SERVER_BIN=../sync-server/target/release/maine-sync-server \
+    swift test --filter SyncServerIntegrationTests   # macOS client against the real server
 scripts/build-app.sh --release [--run]       # build/Maine.app, ad-hoc signed
 scripts/build-app.sh --debug [--run]         # debug configuration
 swift run Maine                               # debug executable directly
@@ -62,9 +64,10 @@ cargo clippy --all-targets && cargo fmt --check
 | --- | --- | --- |
 | Entry, menus | `Sources/Maine/App/MaineApp.swift`, `App/AppState.swift`, `App/MenuBarController.swift` | Window state shared by menus and views; master-password gate on every launch; the resident status item that restores the window |
 | Hosts | `Sources/Maine/Models/Host*.swift` | Host model, validation, vault-backed store |
-| Vault | `Sources/Maine/Services/PasswordStore.swift`, `LocalVaultKeyStore.swift` | Single active file `passwords.maine` (v2, AES-256-GCM + PBKDF2-SHA256); Keychain holds only the session helper key |
+| Vault | `Sources/Maine/Services/PasswordStore.swift`, `LocalVaultKeyStore.swift` | Single active file `passwords.maine` (v2, AES-256-GCM + PBKDF2-SHA256); Keychain holds the session helper key and sync tokens (service `Maine Sync`) |
 | SSH | `Sources/Maine/Services/SSHTarget.swift`, `SSHConfigFile.swift`, `SSHAskPass.swift` | Builds the exact `ssh` command line; reads `~/.ssh/config`; supplies saved passwords |
 | Sessions | `Sources/Maine/Sessions/SessionManager.swift`, `TerminalSession.swift` | Open sessions keyed by session UUID; terminal NSView owned by the session, never reparented |
+| Sync | `Sources/Maine/Sync/*.swift` | Profiles + Keychain tokens; whole-file create/join/pull/push with conflict copies; triggers (unlock pull, 2 s write debounce, 30 s HEAD poll, lock/quit flush); one active workspace, switching parks the outgoing vault |
 | Views | `Sources/Maine/Views/` | Sidebar-only navigation; `DesktopMetrics.swift` is the single spacing vocabulary |
 | Tests | `Tests/MaineTests/` | Geometry, lifecycle, encryption/migration, persistence regressions |
 
@@ -110,6 +113,7 @@ Sync server (`apps/sync-server`, Rust + axum + embedded SQLite):
 8. **Diagnostics are metadata-only and opt-in.** Never log passwords, keystrokes, hostnames, usernames, custom session names, terminal contents or screenshots. Debug regions (`.debugRegion`) record geometry only. The sync server obeys the same rule: request logs are method/path/status at debug level, never tokens, headers or bodies.
 9. **Motion respects the OS.** All transitions/press feedback check Reduce Motion.
 10. **Menu bar resident.** Closing the window hides it; the app must keep running (no terminate-after-last-window, no automatic termination) and the vault stays unlocked until Quit or an explicit lock. The status item restores the window; there is no Dock icon.
+11. **Sync is whole-file and opaque.** The synced object is `passwords.maine` byte for byte; tokens live in secure storage (never in the vault, never logged), the master password never leaves the device, and sync runs only while the vault is unlocked. Adopting a remote vault must keep a conflict copy of a dirty local file, close only sessions whose hosts are gone, and never reparent or restart a surviving terminal. Windows and Android do not implement the protocol yet.
 
 ## Working agreement
 
@@ -118,4 +122,4 @@ Sync server (`apps/sync-server`, Rust + axum + embedded SQLite):
 - **Docs travel with behavior.** Update `README.md` and `docs/architecture.md` (plus `docs/macos-design.md` for layout changes) in the same change.
 - **Icons are scripted.** `scripts/render-mark.swift` generates the active M monogram; `render-icon.swift` (prompt mark) is kept for future use. Rebuild `.icns` with `sips` + `iconutil` per the script headers; never commit ad-hoc binaries outside `Resources/`.
 - **Git hygiene.** `build/` and `.build/` are ignored — never force-add them. Commit only when asked; never push unless asked.
-- **Ask before expanding scope.** Pre-written commands, key management, hosted sync/accounts and new platforms are explicitly on hold / not planned. The self-hosted sync server exists; client-side sync work is planned but not started.
+- **Ask before expanding scope.** Pre-written commands, key management, hosted sync/accounts and new platforms are explicitly on hold / not planned. The self-hosted sync server and the macOS sync client exist; Windows/Android sync is planned but not started.

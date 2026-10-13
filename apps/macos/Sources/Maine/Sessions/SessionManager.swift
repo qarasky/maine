@@ -271,6 +271,41 @@ public final class SessionManager: ObservableObject {
         }
     }
 
+    /// Closes sessions whose host disappeared from an adopted vault, without
+    /// touching the vault again: the records are already gone with it. Every
+    /// surviving host keeps its running terminal; a sync never reparents or
+    /// restarts one.
+    public func closeSessionsMissingFromHosts(_ hosts: [Host]) {
+        let surviving = Set(hosts.map(\.id))
+        let vanished = openSessions.filter { !surviving.contains($0.host.id) }
+        guard !vanished.isEmpty else { return }
+        let vanishedIDs = Set(vanished.map(\.id))
+        for session in vanished {
+            session.disconnect()
+            subscriptions[session.id] = nil
+            sessionNumbers[session.id] = nil
+        }
+        let selectedSessionWasClosed = selectedSessionID.map { vanishedIDs.contains($0) } ?? false
+        openSessions.removeAll { vanishedIDs.contains($0.id) }
+        if selectedSessionWasClosed { selectedSessionID = openSessions.last?.id }
+    }
+
+    /// Checkpoints every session into the vault that is about to be swapped
+    /// out, then stops and drops them without deleting their records. Used by
+    /// sync when the live vault file changes under a workspace switch.
+    public func detachAllForVaultSwitch() throws {
+        do { try checkpointSessions() }
+        catch PasswordStore.VaultError.locked { /* Records were checkpointed at lock. */ }
+        autosaveTask?.cancel()
+        autosaveTask = nil
+        for session in openSessions { session.disconnect() }
+        subscriptions.removeAll()
+        sessionNumbers.removeAll()
+        selectedSessionID = nil
+        openSessions = []
+        savedSessions = []
+    }
+
     private func observe(_ session: TerminalSession) {
         subscriptions[session.id] = session.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()

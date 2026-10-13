@@ -160,9 +160,29 @@ empty-state text, and backgrounding does not lock the vault.
 | Capability | macOS | Windows | Android |
 | --- | --- | --- | --- |
 | Debug logging / diagnostics snapshot | ✅ metadata-only, opt-in | ❌ not started | ❌ (no logging at all, deliberately) |
-| Test suite | 84 test functions (~86 cases), real PTY child | 57 Core cases; `Maine.App` untested | 49 JVM cases; transport/UI untested |
-| CI | `swift test` on macOS | Core on Ubuntu + solution compile on Windows | unit tests on Ubuntu |
+| Test suite | 106 cases incl. sync engine + real-server integration, real PTY child | 57 Core cases; `Maine.App` untested | 49 JVM cases; transport/UI untested |
+| CI | `swift test` on macOS (builds the Rust server first, runs the client-vs-server integration test) | Core on Ubuntu + solution compile on Windows | unit tests on Ubuntu |
 | Schema validator | `packages/schema/tools/validate.py` (all clients) | | |
+
+### 3.8 Sync (optional, self-hosted)
+
+The server (`apps/sync-server`, Rust) is shared by every client and speaks the
+frozen `/v1` contract in `docs/sync-protocol.md`; it is not platform code. The
+client side exists on macOS only:
+
+| Capability | macOS | Windows | Android |
+| --- | --- | --- | --- |
+| Create slot / token shown once | ✅ Settings → Sync | ❌ | ❌ |
+| Join (token + remote master password, verified before any file changes) | ✅ | ❌ | ❌ |
+| Pull on unlock, push ~2 s after a write, 30 s `HEAD` poll, backoff | ✅ | ❌ | ❌ |
+| Conflict copies (`passwords.conflict-….maine`) + adopt | ✅ | ❌ | ❌ |
+| Profiles + workspaces (one active), workspace switching | ✅ | ❌ | ❌ |
+| Token storage | ✅ Keychain, service `Maine Sync` | ❌ (DPAPI file, per `sync-client.md`) | ❌ (Keystore-backed prefs) |
+| Client-vs-server integration test | ✅ `SyncServerIntegrationTests` (CI builds the server) | ❌ | ❌ |
+
+Windows and Android can implement the client from `docs/sync-client.md`; the
+server's `tests/http.rs` and `scripts/smoke.sh` are the executable protocol
+spec, and no macOS code is needed to follow it.
 
 ---
 

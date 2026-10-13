@@ -8,6 +8,9 @@ enum VaultCommands {
     static func lock(appState: AppState, sessions: SessionManager) {
         do {
             try sessions.checkpointSessions()
+            // One best-effort push while the vault is still open; it reads
+            // the file, not the key, so it cannot delay the lock.
+            SyncCoordinator.shared.flushForLock()
             appState.lockVault()
         } catch {
             appState.showAlert(title: "Sessions could not be saved", error.localizedDescription)

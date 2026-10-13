@@ -34,6 +34,7 @@ struct RootView: View {
             MenuBarController.shared.configure(appState: appState, sessions: sessions) {
                 openWindow(id: "main")
             }
+            SyncCoordinator.shared.configure(store: store, sessions: sessions, appState: appState)
             guard !initialized else { return }
             initialized = true
             appState.prepareForLaunch()
@@ -51,11 +52,14 @@ struct RootView: View {
                 save(draft: savedHost)
             }
         }
-        .onChange(of: appState.isVaultUnlocked) { _, _ in
+        .onChange(of: appState.isVaultUnlocked) { _, unlocked in
             store.load()
-            if appState.isVaultUnlocked {
+            if unlocked {
                 do { try sessions.restoreSavedSessions() }
                 catch { appState.showAlert(title: "Saved sessions not restored", error.localizedDescription) }
+                Task { await SyncCoordinator.shared.vaultDidUnlock() }
+            } else {
+                SyncCoordinator.shared.vaultDidLock()
             }
         }
         .sheet(isPresented: $appState.isVaultSheetPresented) {
