@@ -63,7 +63,20 @@ public final class TerminalSession: ObservableObject, Identifiable {
     public let host: Host
     /// The executable this session runs: the system OpenSSH client in the app.
     public let executablePath: String
-    public let terminalView: LocalProcessTerminalView
+    /// The view the session renders into: SwiftTerm's `LocalProcessTerminalView`
+    /// for ordinary sessions, `CapturingTerminalView` for agent sessions.
+    public let terminalView: TerminalView
+    /// Arguments that replace the `ssh` command line (tests run `/bin/sh`).
+    private let processArguments: [String]?
+    /// The agent driving this session, if any.
+    @Published public internal(set) var agent: AgentDriver?
+    /// Set when agent control ended but the session stays open, still
+    /// ephemeral, until the user keeps or closes it.
+    @Published public internal(set) var formerAgentName: String?
+    /// Last time the user typed into this session (agent sessions only).
+    public private(set) var lastUserInputAt: Date?
+    /// Agent sessions are never checkpointed until the user keeps them.
+    public var isEphemeral: Bool { agent != nil || formerAgentName != nil }
     @Published public internal(set) var customName: String?
     @Published public internal(set) var savedSessionID: UUID?
 
@@ -76,16 +89,24 @@ public final class TerminalSession: ObservableObject, Identifiable {
     @Published public private(set) var needsPassword = false
     private var disconnectRequested = false
 
-    public init(host: Host, executablePath: String = SSHTarget.executablePath) {
+    public init(host: Host, executablePath: String = SSHTarget.executablePath,
+                processArguments: [String]? = nil, capturesOutput: Bool = false) {
         self.host = host
         self.executablePath = executablePath
+        self.processArguments = processArguments
         // A sensible starting size: the view is usually laid out before ssh
         // produces output, and the PTY is resized as soon as the frame is real.
-        terminalView = LocalProcessTerminalView(
-            frame: NSRect(x: 0, y: 0, width: 800, height: 480),
-            options: TerminalOptions(cols: 80, rows: 24)
-        )
-        terminalView.processDelegate = self
+        let frame = NSRect(x: 0, y: 0, width: 800, height: 480)
+        let options = TerminalOptions(cols: 80, rows: 24)
+        if capturesOutput {
+            let view = CapturingTerminalView(frame: frame, options: options)
+            terminalView = view
+            view.host = self
+        } else {
+            let view = LocalProcessTerminalView(frame: frame, options: options)
+            terminalView = view
+            view.processDelegate = self
+        }
         // Stable terminal contrast in both system appearances. ANSI colors and
         // the remote application's escape sequences remain terminal-owned.
         terminalView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -156,11 +177,12 @@ public final class TerminalSession: ObservableObject, Identifiable {
             }
         }
         state = .connecting
-        terminalView.startProcess(
-            executable: executablePath,
-            args: target.arguments,
-            environment: environment
-        )
+        let arguments = processArguments ?? target.arguments
+        if let capturing = terminalView as? CapturingTerminalView {
+            capturing.startProcess(executable: executablePath, args: arguments, environment: environment)
+        } else {
+            localTerminalView?.startProcess(executable: executablePath, args: arguments, environment: environment)
+        }
         DebugLog.shared.record("session.process-start-returned", fields: debugFields)
     }
 
@@ -176,7 +198,8 @@ public final class TerminalSession: ObservableObject, Identifiable {
         DebugDiagnostics.capture("disconnect.\(correlation).before")
         DebugLog.shared.record("disconnect.terminate-begin", fields: debugFields.merging(["correlation": correlation]) { _, new in new }, flush: true)
         let start = ProcessInfo.processInfo.systemUptime
-        terminalView.terminate()
+        if let capturing = terminalView as? CapturingTerminalView { capturing.terminate() }
+        else { localTerminalView?.terminate() }
         DebugLog.shared.record("disconnect.terminate-returned", fields: debugFields.merging([
             "correlation": correlation,
             "elapsedMS": String((ProcessInfo.processInfo.systemUptime - start) * 1000)
@@ -188,6 +211,72 @@ public final class TerminalSession: ObservableObject, Identifiable {
     public func focus() {
         terminalView.window?.makeFirstResponder(terminalView)
     }
+
+    var localTerminalView: LocalProcessTerminalView? { terminalView as? LocalProcessTerminalView }
+
+    /// The child's pid and whether it runs, for diagnostics.
+    var processPID: pid_t {
+        (terminalView as? CapturingTerminalView)?.shellPid ?? localTerminalView?.process.shellPid ?? 0
+    }
+
+    var processRunning: Bool {
+        (terminalView as? CapturingTerminalView)?.isRunning ?? localTerminalView?.process.running ?? false
+    }
+
+    /// Agent input. Only agent sessions can be written to this way.
+    func sendInput(_ bytes: [UInt8]) {
+        (terminalView as? CapturingTerminalView)?.sendToProcess(bytes)
+    }
+
+    /// The visible screen as text, and the cursor.
+    func screenText() -> (rows: [String], cursorRow: Int, cursorCol: Int) {
+        let snapshot = terminalView.terminalStateSnapshot()
+        let rows = terminalView.visibleRowsText(0..<snapshot.dimensions.rows)
+        return (rows, snapshot.cursor.row, snapshot.cursor.col)
+    }
+
+    private func markConnectedAfterLayout() {
+        guard case .connecting = state else { return }
+        // AppKit calls this during SwiftUI layout. Publishing synchronously here
+        // invalidates the view tree while it is being laid out (undefined UI).
+        Task { @MainActor [weak self] in
+            guard let self, case .connecting = self.state else { return }
+            self.state = .connected
+        }
+    }
+
+    private func terminated(exitCode: Int32?) {
+        DebugLog.shared.record("process.terminated-callback", fields: debugFields.merging([
+            "exitCode": exitCode.map(String.init) ?? "signal"
+        ]) { _, new in new }, flush: true)
+        state = disconnectRequested ? .disconnected(exitCode: exitCode) : .closed(exitCode: exitCode)
+    }
+}
+
+extension TerminalSession: CapturingTerminalViewHost {
+    func capturedOutput(_ bytes: ArraySlice<UInt8>) {
+        // An agent session may never be laid out, so output (not sizing)
+        // is its "connection is up" signal.
+        markConnectedAfterLayout()
+        agent?.ingest(bytes)
+    }
+
+    func capturedUserInput() {
+        lastUserInputAt = Date()
+    }
+
+    func capturedSizeChange() {
+        markConnectedAfterLayout()
+    }
+
+    func capturedTermination(exitCode: Int32?) {
+        terminated(exitCode: exitCode)
+    }
+
+    func capturedLaunchFailure(_ error: LocalProcessError) {
+        DebugLog.shared.record("process.failed-callback", fields: debugFields)
+        state = .failed(error.message)
+    }
 }
 
 extension TerminalSession: LocalProcessTerminalViewDelegate {
@@ -198,13 +287,7 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
         DebugLog.shared.record("terminal.size-changed", fields: [
             "session": id.uuidString, "cols": String(newCols), "rows": String(newRows), "state": state.debugName
         ])
-        guard case .connecting = state else { return }
-        // AppKit calls this during SwiftUI layout. Publishing synchronously here
-        // invalidates the view tree while it is being laid out (undefined UI).
-        Task { @MainActor [weak self] in
-            guard let self, case .connecting = self.state else { return }
-            self.state = .connected
-        }
+        markConnectedAfterLayout()
     }
 
     public func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
@@ -217,10 +300,7 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
     }
 
     public func processTerminated(source: TerminalView, exitCode: Int32?) {
-        DebugLog.shared.record("process.terminated-callback", fields: debugFields.merging([
-            "exitCode": exitCode.map(String.init) ?? "signal"
-        ]) { _, new in new }, flush: true)
-        state = disconnectRequested ? .disconnected(exitCode: exitCode) : .closed(exitCode: exitCode)
+        terminated(exitCode: exitCode)
     }
 
     public func processFailedToStart(source: TerminalView, error: LocalProcessError) {

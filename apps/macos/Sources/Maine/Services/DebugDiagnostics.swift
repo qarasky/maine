@@ -106,7 +106,7 @@ extension TerminalSession {
     var debugFields: [String: String] {
         let counters = terminalView.diagnostics
         var fields: [String: String] = ["session": id.uuidString, "host": host.id.uuidString, "state": state.debugName,
-         "childPID": String(terminalView.process.shellPid), "running": String(terminalView.process.running),
+         "childPID": String(processPID), "running": String(processRunning),
          "terminal": String(describing: ObjectIdentifier(terminalView)),
          "frame": NSStringFromRect(terminalView.frame), "bounds": NSStringFromRect(terminalView.bounds),
          "attached": String(terminalView.superview != nil),

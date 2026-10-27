@@ -3,11 +3,22 @@ import SwiftUI
 @main
 enum MaineEntryPoint {
     @MainActor
+    enum Mode: Equatable { case app, askPass, mcpBridge }
+
+    static func mode(arguments: [String], environment: [String: String]) -> Mode {
+        // Askpass first: its argument is a prompt the remote server chose.
+        if environment["MAINE_SSH_ASKPASS"] == "1" { return .askPass }
+        if arguments.dropFirst().contains("--mcp") { return .mcpBridge }
+        return .app
+    }
+
     static func main() {
-        if ProcessInfo.processInfo.environment["MAINE_SSH_ASKPASS"] == "1" {
-            exit(SSHAskPass.run())
+        switch mode(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment) {
+        // MCP clients start `Maine --mcp`: a stdio bridge to the running app, no UI.
+        case .mcpBridge: exit(MCPBridge.runStdio())
+        case .askPass: exit(SSHAskPass.run())
+        case .app: MaineApp.main()
         }
-        MaineApp.main()
     }
 }
 
@@ -112,7 +123,12 @@ struct MaineApp: App {
         }
 
         Settings {
-            SyncSettingsView()
+            TabView {
+                SyncSettingsView()
+                    .tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
+                AgentSettingsView()
+                    .tabItem { Label("Agents", systemImage: "cpu") }
+            }
         }
     }
 

@@ -33,12 +33,12 @@ struct TerminalContainerView: NSViewRepresentable {
 /// SwiftUI manages this neutral container, not SwiftTerm's mutable terminal
 /// view. Explicit constraints prevent terminal sizing from collapsing the UI.
 final class TerminalHostView: NSView {
-    let terminal: LocalProcessTerminalView
+    let terminal: TerminalView
     let sessionID: UUID
     private var active = false
     private var lastLoggedGeometry: String?
 
-    init(terminal: LocalProcessTerminalView, sessionID: UUID) {
+    init(terminal: TerminalView, sessionID: UUID) {
         self.terminal = terminal
         self.sessionID = sessionID
         super.init(frame: .zero)
@@ -124,6 +124,14 @@ struct SessionView: View {
                 .layoutPriority(1)
                 .debugRegion("session-header", sessionID: session.id)
             Divider()
+
+            if session.agent != nil || session.formerAgentName != nil {
+                AgentStrip(session: session)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
+                    .debugRegion("agent-strip", sessionID: session.id)
+                Divider()
+            }
 
             if let notice = session.state.notice {
                 NoticeBanner(session: session, message: notice)
@@ -258,5 +266,48 @@ struct NoticeBanner: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(SwiftUI.Color.orange.opacity(0.12))
+    }
+}
+
+/// Above an agent session's terminal: who drives it, and the user's controls.
+/// After control ends the session stays ephemeral until kept or closed.
+struct AgentStrip: View {
+    @ObservedObject var session: TerminalSession
+    @EnvironmentObject private var sessions: SessionManager
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "cpu").foregroundStyle(.secondary)
+            if let agent = session.agent {
+                AgentStripControls(agent: agent, session: session)
+            } else if let name = session.formerAgentName {
+                Text("Agent disconnected (\(name))")
+                    .font(.callout)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button("Keep Session") { sessions.keepSession(session.id) }
+                    .help("Save this session like any other, so it is restored after relaunch")
+                Button("Close") { sessions.closeSession(session.id) }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(SwiftUI.Color.accentColor.opacity(0.08))
+    }
+}
+
+private struct AgentStripControls: View {
+    @ObservedObject var agent: AgentDriver
+    let session: TerminalSession
+    @EnvironmentObject private var sessions: SessionManager
+
+    var body: some View {
+        Text(agent.isPaused ? "Paused — \(agent.clientName)" : "Driven by \(agent.clientName)")
+            .font(.callout)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        Button(agent.isPaused ? "Resume" : "Pause") { agent.isPaused.toggle() }
+        Button("Stop") { sessions.endAgentControl(session.id) }
+            .help("End agent control; the session stays open")
+        Button("Keep Session") { sessions.keepSession(session.id) }
+            .help("Save this session like any other; agent control ends")
     }
 }

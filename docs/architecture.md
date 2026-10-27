@@ -280,6 +280,50 @@ respect accessibility Reduce Motion.
   sessions by `SessionManager`, and the host being edited by `AppState`, so the
   menu commands and the views can never disagree about what is selected.
 
+## Agent access (MCP)
+
+Specified in [mcp.md](mcp.md); phase 1 is built. The pieces, in the order a
+tool call travels:
+
+* **`Maine --mcp`** (`Agents/MCPBridge.swift`). `MaineEntryPoint` checks for
+  the flag before anything else, like the askpass branch, and never creates an
+  `NSApplication`. It speaks MCP's JSON-RPC over stdio (`initialize`, `ping`,
+  `tools/list`, `tools/call`; requests handled concurrently), and forwards
+  tool calls over the socket. Without a running app every call returns
+  "Maine is not running…"; it never launches the app.
+* **The socket** (`Agents/AgentSocket.swift`, `AgentServer.swift`):
+  `~/Library/Application Support/Maine/agent.sock`, directory `0700`, socket
+  `0600`, peers checked with `getpeereid`. Frames are a 4-byte length plus
+  JSON (`AgentProtocol.swift`). The first frame must carry a paired client's
+  token; `AgentClientStore` keeps only SHA-256 of each token in the Keychain
+  (service `Maine Agents`) and compares in constant time. A stale socket left
+  by a crash is removed after a failed connect probe.
+* **Tools** (`AgentTools.swift`, catalog in `AgentToolCatalog.swift`). Every
+  id is checked against the caller and against `AgentAccess` (allowed groups
+  and hosts), judged on the host's current group; anything else answers
+  `not found`, exactly like an id that doesn't exist. Results are JSON objects.
+* **Driving a session** (`AgentDriver.swift`). `run` types
+  `{ <command>\n}; printf '\033]7770;<nonce>;%d\007' "$?"`; the terminal
+  ignores that OSC and the driver finds it, with a fresh nonce per command, in
+  the raw bytes, which yields the exit code and the exact end of the output.
+  Marker support is probed once when the session opens; shells without it fall
+  back to "quiet for 1.5 s and the last line looks like a prompt". Output is
+  cleaned (`AgentOutput.swift`: escapes stripped, `\r`/backspace applied,
+  2 MiB ring, 64 KiB per result, cut in the middle). Agent input waits while
+  the user is typing.
+* **Capturing terminal** (`Sessions/CapturingTerminalView.swift`). SwiftTerm's
+  `LocalProcessTerminalView` hands PTY bytes straight to its parser and keeps
+  its `LocalProcess` internal, so agent sessions use a `TerminalView` that owns
+  a public `LocalProcess`, passes each byte batch to the driver and then
+  renders it. Human sessions keep `LocalProcessTerminalView` unchanged.
+* **Lifecycle** (`AgentCoordinator.swift`). The master switch starts and stops
+  the server. Agent sessions are ephemeral: `SessionManager` never checkpoints
+  them until the user chooses **Keep Session**; ending control (Stop, Stop All,
+  revoke, access removed, switch off) keeps the session open and marked.
+  Locking the vault pauses every agent and fails every tool; unlocking resumes
+  only what the lock paused. Access rules live in the encrypted local state
+  file next to the session snapshots, so they never sync.
+
 ## The Android client
 
 Kotlin + Jetpack Compose in `apps/android`, following the same five layers

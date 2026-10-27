@@ -67,6 +67,18 @@ Drag a host onto a group header to add it to the end of that group, onto another
 
 Groups and their order live in the vault, so they sync with your hosts. Which groups are collapsed is remembered per Mac, encrypted next to the saved sessions, and never synced. The Android client does not show groups yet, and saving a host there drops them.
 
+## Agents (MCP)
+
+Maine can let AI agents such as Claude Code or Claude Desktop work on your servers through real Maine sessions you can watch. It is off until you turn it on in **Settings → Agents**:
+
+1. Switch on **Allow agent access**.
+2. **Add Client…**, give it a name, and copy the setup it shows once — for Claude Code a command like `claude mcp add maine --env MAINE_AGENT_TOKEN=… -- "/Applications/Maine.app/Contents/MacOS/Maine" --mcp`, for Claude Desktop the JSON for `claude_desktop_config.json`.
+3. Tick the groups and hosts agents may use. Everything else is invisible to them.
+
+Agents can list allowed hosts, open sessions, run commands (getting output and the exit code), read output and the screen, send keys, and close their sessions. Agent sessions appear under their host in the sidebar with an agent badge; the header shows who drives it with **Pause**, **Stop** and **Keep Session**, and the menu bar item has **Stop All Agents**. Agent sessions are not saved or restored unless you keep them, and locking the vault pauses every agent. There are no approval prompts in Maine — allowed means fully usable — because agents already ask for permission in their own harnesses.
+
+What leaves your Mac, only for allowed hosts: host names, groups, addresses, ports, usernames and the terminal output of agent sessions, sent to the agent and its model provider. Saved passwords are never sent. Access rules and client tokens stay on this Mac and never sync. Revoke a client in Settings to cut it off immediately. The design is [docs/mcp.md](docs/mcp.md).
+
 ## Saved sessions
 
 Sessions automatically save their name and the terminal's currently retained plain-text buffer (up to 1 MiB), periodically and before normal quit or vault lock. It is a snapshot, not a full activity log: colors, cursor state, remote processes and shell state are not saved. Output can contain sensitive data, so snapshots are encrypted with the vault's key. They stay on this Mac: snapshots live in their own file, `sessions-<vault id>.maine`, next to `passwords.maine`, and are never part of the synced vault. Another device sees your hosts but not your sessions or their scrollback, and session checkpoints never trigger a sync push. Vaults written by older builds, which kept snapshots inside `passwords.maine`, move them to the local file on the next unlock.
@@ -165,6 +177,8 @@ The macOS application is the first client, and it is at version 1.0.0:
 | Android client (vault parity, host CRUD, real terminal) | in progress |
 | Self-hosted sync server (Rust, zero-knowledge slots) | done |
 | Sync in the macOS client (create/join, conflict copies, workspaces) | done |
+| MCP agent access (sessions, run, output, keys) | done (phase 1) |
+| Agents typing saved passwords into sudo prompts | planned (phase 2) |
 | Sync in the Android client | not started |
 | Linux client | not started |
 | Accounts, hosted service, key management | not planned |

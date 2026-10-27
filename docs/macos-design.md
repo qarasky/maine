@@ -47,6 +47,12 @@ as a custom imitation: Maine supports macOS 14 and uses native system materials.
   close) just left of its close control, or at the row's trailing edge when the
   host has no session. It copies the IP, username and password and shows a
   checkmark for about a second; it never shifts the row's highlight bounds.
+- Agent sessions always show as child rows under their host, with a small `cpu`
+  badge (a pause glyph when paused, a mini spinner while the agent types or a
+  command runs). Above the terminal, a tinted strip reads "Driven by *client*"
+  with Pause/Resume, Stop and Keep Session, or "Agent disconnected" with Keep
+  Session and Close; it is fixed-size like the notice banner and never grows
+  the split view. Settings has Sync and Agents tabs.
 - Groups are quiet section headers, in the style of Finder's sidebar: a rotating
   chevron, a secondary semibold name, and a host count only when collapsed. The
   whole header toggles and shares the row hover highlight. Hosts inside a group

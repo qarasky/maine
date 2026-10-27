@@ -16,9 +16,12 @@ enum SSHAskPass {
         } + overrides.map { "\($0.key)=\($0.value)" }
     }
 
+    /// `Password:`, `user@host's password:`, `[sudo] password for alice:`,
+    /// `Password for alice@web:`. Never passphrases, one-time codes or MFA.
     static func isPasswordPrompt(_ prompt: String) -> Bool {
-        let lower = prompt.lowercased()
-        return lower.contains("password:") && !lower.contains("passphrase")
+        let lower = prompt.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let asksForPassword = lower.contains("password:") || (lower.contains("password for ") && lower.hasSuffix(":"))
+        return asksForPassword && !lower.contains("passphrase")
             && !lower.contains("one-time") && !lower.contains("verification")
     }
 

@@ -215,6 +215,7 @@ public struct PasswordStore: Sendable {
     private struct LocalState: Codable, Equatable {
         var sessions: [SavedSession] = []
         var collapsedGroups: [UUID] = []
+        var agentAccess = AgentAccess()
 
         init(sessions: [SavedSession] = []) { self.sessions = sessions }
 
@@ -223,6 +224,7 @@ public struct PasswordStore: Sendable {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             sessions = try container.decodeIfPresent([SavedSession].self, forKey: .sessions) ?? []
             collapsedGroups = try container.decodeIfPresent([UUID].self, forKey: .collapsedGroups) ?? []
+            agentAccess = try container.decodeIfPresent(AgentAccess.self, forKey: .agentAccess) ?? AgentAccess()
         }
     }
 
@@ -237,6 +239,16 @@ public struct PasswordStore: Sendable {
     public func collapsedGroupIDs() throws -> Set<UUID> {
         guard let vault = try read() else { return [] }
         return Set(try localState(vault, key: unlockedKey(vault)).collapsedGroups)
+    }
+
+    /// Hosts and groups MCP agents may use. Device-local: never synced.
+    public func agentAccess() throws -> AgentAccess {
+        guard let vault = try read() else { return AgentAccess() }
+        return try localState(vault, key: unlockedKey(vault)).agentAccess
+    }
+
+    public func setAgentAccess(_ access: AgentAccess) throws {
+        try updateLocalState { $0.agentAccess = access }
     }
 
     public func setCollapsedGroupIDs(_ ids: Set<UUID>) throws {

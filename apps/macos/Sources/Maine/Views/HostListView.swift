@@ -142,7 +142,7 @@ struct HostListView: View {
     private func hostEntry(_ host: Host) -> some View {
         let hostSessions = sessions.sessions(for: host.id)
         let showsChildren = hostSessions.count > 1 || hostSessions.contains {
-            $0.customName != nil || renamingSessionID == $0.id
+            $0.customName != nil || renamingSessionID == $0.id || $0.isEphemeral
         }
         return VStack(spacing: 2) {
             HStack(spacing: 0) {
@@ -489,6 +489,12 @@ struct HostListView: View {
                     .simultaneousGesture(TapGesture(count: 2).onEnded { beginRename(session) })
             }
             Spacer(minLength: 4)
+            if let agent = session.agent {
+                AgentActivityBadge(agent: agent)
+            } else if session.formerAgentName != nil {
+                Image(systemName: "cpu").font(.system(size: 10)).foregroundStyle(.tertiary)
+                    .help("Agent disconnected")
+            }
             stateIndicator(for: session.state)
         }
         .font(.system(size: 12))
@@ -758,4 +764,24 @@ enum SidebarDropTarget: Hashable {
     case group(HostGroup.ID)
     case groupEnd(HostGroup.ID)
     case ungroupedEnd
+}
+
+/// Marks an agent-driven session row; spins while the agent is typing or a
+/// command runs. A paused agent shows a pause glyph instead.
+struct AgentActivityBadge: View {
+    @ObservedObject var agent: AgentDriver
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if agent.isBusy || agent.isActive {
+                ProgressView().controlSize(.mini)
+            }
+            Image(systemName: agent.isPaused ? "pause.circle" : "cpu")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
+        .help(agent.isPaused ? "\(agent.clientName) is paused" : "Driven by \(agent.clientName)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(agent.isPaused ? "Agent paused" : "Driven by \(agent.clientName)")
+    }
 }

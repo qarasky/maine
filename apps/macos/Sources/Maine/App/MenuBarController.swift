@@ -119,6 +119,15 @@ final class MenuBarController: NSObject {
             menu.addItem(.separator())
         }
 
+        let agents = AgentCoordinator.shared.activeCount
+        if agents > 0 {
+            let status = NSMenuItem(title: "Agents: \(agents) active", action: nil, keyEquivalent: "")
+            status.isEnabled = false
+            menu.addItem(status)
+            menu.addItem(item("Stop All Agents", action: #selector(stopAllAgents)))
+            menu.addItem(.separator())
+        }
+
         menu.addItem(item("Quit Maine", action: #selector(quitMaine)))
 
         // A status item shows its menu on left-click while one is installed,
@@ -148,6 +157,8 @@ final class MenuBarController: NSObject {
     }
 
     @objc private func quitMaine() { NSApp.terminate(nil) }
+
+    @objc private func stopAllAgents() { AgentCoordinator.shared.stopAll() }
 
     // MARK: - Menu bar mark
 

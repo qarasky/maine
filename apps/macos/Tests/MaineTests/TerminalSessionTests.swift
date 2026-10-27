@@ -65,10 +65,10 @@ struct TerminalSessionTests {
     }
 
     @Test
-    func layoutCallbackDoesNotPublishConnectionStateSynchronously() async {
+    func layoutCallbackDoesNotPublishConnectionStateSynchronously() async throws {
         let session = session(executable: "/bin/echo")
         session.connect()
-        session.sizeChanged(source: session.terminalView, newCols: 80, newRows: 24)
+        session.sizeChanged(source: try #require(session.terminalView as? LocalProcessTerminalView), newCols: 80, newRows: 24)
         #expect(session.state == .connecting)
         session.disconnect()
         await poll { !session.state.isLive }
@@ -87,13 +87,13 @@ struct TerminalSessionTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func processOutputReachesTheTerminal() async {
+    func processOutputReachesTheTerminal() async throws {
         let session = session(executable: "/bin/echo")
         // Give the PTY a size the way SwiftUI does when it lays the view out.
         session.terminalView.frame = NSRect(x: 0, y: 0, width: 400, height: 240)
 
         let output = OutputFlag()
-        session.terminalView.setProcessOutputHandler { output.mark() }
+        try #require(session.terminalView as? LocalProcessTerminalView).setProcessOutputHandler { output.mark() }
         session.connect()
 
         await poll { output.seen }

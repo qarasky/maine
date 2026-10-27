@@ -32,17 +32,24 @@ public final class SessionManager: ObservableObject {
     private var autosaveTask: Task<Void, Never>?
     private let store: HostStore
     private let makeSession: (Host) -> TerminalSession
+    private let makeAgentSession: (Host) -> TerminalSession
 
-    public init(store: HostStore, makeSession: @escaping (Host) -> TerminalSession = { TerminalSession(host: $0) }) {
+    public init(store: HostStore, makeSession: @escaping (Host) -> TerminalSession = { TerminalSession(host: $0) },
+                makeAgentSession: @escaping (Host) -> TerminalSession = { TerminalSession(host: $0, capturesOutput: true) }) {
         self.store = store
         self.makeSession = makeSession
+        self.makeAgentSession = makeAgentSession
     }
 
     // MARK: - Queries
 
+    /// The user's session for a host, for host-level actions (click, close,
+    /// reconnect). Agent sessions are never picked: they are reached only
+    /// through their own rows.
     public func session(for hostID: Host.ID) -> TerminalSession? {
-        if let selectedSession, selectedSession.host.id == hostID { return selectedSession }
-        return sessions(for: hostID).first(where: { $0.state.isLive }) ?? sessions(for: hostID).first
+        if let selectedSession, selectedSession.host.id == hostID, !selectedSession.isEphemeral { return selectedSession }
+        let mine = sessions(for: hostID).filter { !$0.isEphemeral }
+        return mine.first(where: { $0.state.isLive }) ?? mine.first
     }
 
     public func sessions(for hostID: Host.ID) -> [TerminalSession] {
@@ -71,7 +78,8 @@ public final class SessionManager: ObservableObject {
         guard store.persistsSessions, !openSessions.isEmpty else { return }
         let stored = try store.savedSessions()
         var changes: [SavedSession] = []
-        for session in openSessions {
+        // Agent sessions are ephemeral until the user keeps them.
+        for session in openSessions where !session.isEphemeral {
             let id = session.savedSessionID ?? session.id
             let history = session.historySnapshot()
             let name = label(for: session)
@@ -84,7 +92,9 @@ public final class SessionManager: ObservableObject {
             try store.saveSessions(changes)
             store.clearSaveFailure()
         }
-        for session in openSessions where session.savedSessionID == nil { session.savedSessionID = session.id }
+        for session in openSessions where session.savedSessionID == nil && !session.isEphemeral {
+            session.savedSessionID = session.id
+        }
         savedSessions = try store.savedSessions()
     }
 
@@ -186,6 +196,51 @@ public final class SessionManager: ObservableObject {
         session.connect()
         checkpointAutomatically()
         startAutosave()
+    }
+
+    // MARK: - Agent sessions
+
+    public var agentSessions: [TerminalSession] { openSessions.filter { $0.agent != nil } }
+
+    /// Opens a session for an MCP client. It appears in the sidebar like any
+    /// session but is not selected (the user's focus stays where it is) and
+    /// is never checkpointed or restored.
+    func openAgentSession(_ host: Host, client: AgentClient, name: String?) -> TerminalSession {
+        DebugLog.shared.record("manager.agent-session", fields: ["host": host.id.uuidString, "client": client.id.uuidString])
+        let number = sessions(for: host.id).compactMap { sessionNumbers[$0.id] }.max().map { $0 + 1 } ?? 1
+        let session = makeAgentSession(host)
+        sessionNumbers[session.id] = number
+        if let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            session.customName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        session.agent = AgentDriver(session: session, client: client)
+        observe(session)
+        openSessions.append(session)
+        session.connect()
+        startAutosave()
+        return session
+    }
+
+    /// Ends agent control of a session; it stays open, marked, until the
+    /// user keeps or closes it.
+    public func endAgentControl(_ sessionID: UUID) {
+        guard let session = openSessions.first(where: { $0.id == sessionID }), let agent = session.agent else { return }
+        agent.detach()
+        session.formerAgentName = agent.clientName
+        session.agent = nil
+    }
+
+    public func endAgentControl(clientID: UUID) {
+        for session in openSessions where session.agent?.clientID == clientID { endAgentControl(session.id) }
+    }
+
+    /// Turns an agent session into an ordinary saved session.
+    public func keepSession(_ sessionID: UUID) {
+        guard let session = openSessions.first(where: { $0.id == sessionID }) else { return }
+        session.agent?.detach()
+        session.agent = nil
+        session.formerAgentName = nil
+        checkpointAutomatically()
     }
 
     /// Starts a brand new session: the old process is stopped and the terminal

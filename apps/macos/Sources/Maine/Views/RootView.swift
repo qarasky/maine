@@ -35,6 +35,7 @@ struct RootView: View {
                 openWindow(id: "main")
             }
             SyncCoordinator.shared.configure(store: store, sessions: sessions, appState: appState)
+            AgentCoordinator.shared.configure(store: store, sessions: sessions, appState: appState)
             guard !initialized else { return }
             initialized = true
             appState.prepareForLaunch()
@@ -58,8 +59,10 @@ struct RootView: View {
                 do { try sessions.restoreSavedSessions() }
                 catch { appState.showAlert(title: "Saved sessions not restored", error.localizedDescription) }
                 Task { await SyncCoordinator.shared.vaultDidUnlock() }
+                AgentCoordinator.shared.vaultDidUnlock()
             } else {
                 SyncCoordinator.shared.vaultDidLock()
+                AgentCoordinator.shared.vaultDidLock()
             }
         }
         .sheet(isPresented: $appState.isVaultSheetPresented) {
