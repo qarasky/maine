@@ -49,6 +49,7 @@ public struct PasswordStore: Sendable {
     private struct Contents: Codable {
         var hosts: [Host] = []
         var passwords: [String: String] = [:]
+        /// Only read, to migrate older vaults; never written.
         var sessions: [SavedSession]?
     }
 
@@ -101,6 +102,7 @@ public struct PasswordStore: Sendable {
                 vault.payload = try seal(JSONEncoder().encode(contents), key: key, context: vault.context)
                 try write(vault)
             }
+            try migrateEmbeddedSessions(&vault, contents: &contents, key: key)
             try keys.save(key.withUnsafeBytes { Data($0) }, for: vault.id)
         } else {
             guard masterPassword.count >= 12 else { throw VaultError.weakPassword }
@@ -168,40 +170,117 @@ public struct PasswordStore: Sendable {
         try updateContents {
             $0.hosts.removeAll { $0.id == hostID }
             $0.passwords.removeValue(forKey: hostID.uuidString)
-            $0.sessions?.removeAll { $0.hostID == hostID }
         }
+        try updateSessions { $0.removeAll { $0.hostID == hostID } }
     }
+
+    // MARK: - Device-local sessions
+
+    /// Session snapshots (names and scrollback) never enter the synced vault.
+    /// They live in `sessions-<vault id>.maine` next to it, sealed with the
+    /// same key and bound to the vault's context, so they unlock and lock
+    /// with it but stay on this device. Keying by vault ID keeps each
+    /// workspace's sessions apart without moving files on a switch.
+    public var sessionsFileURL: URL? {
+        guard let vault = try? read() else { return nil }
+        return sessionsFileURL(for: vault.id)
+    }
+
+    private func sessionsFileURL(for vaultID: UUID) -> URL {
+        fileURL.deletingLastPathComponent().appendingPathComponent("sessions-\(vaultID.uuidString).maine")
+    }
+
+    private struct SessionsFile: Codable {
+        var version = 1
+        var vault: UUID
+        var payload: Data
+    }
+
+    private static func sessionsContext(_ vault: Vault) -> Data { vault.context + Data(":sessions".utf8) }
 
     public func savedSessions() throws -> [SavedSession] {
         guard let vault = try read() else { return [] }
-        return try decodeContents(vault, key: unlockedKey(vault)).sessions ?? []
+        return try localSessions(vault, key: unlockedKey(vault))
     }
 
     public func saveSession(_ session: SavedSession) throws {
         guard !session.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw VaultError.invalidFile
         }
-        try updateContents { contents in
-            var sessions = contents.sessions ?? []
-            if let index = sessions.firstIndex(where: { $0.id == session.id }) { sessions[index] = session }
-            else { sessions.append(session) }
-            contents.sessions = sessions
-        }
+        try saveSessions([session])
     }
 
     public func saveSessions(_ sessions: [SavedSession]) throws {
-        try updateContents { contents in
-            var saved = contents.sessions ?? []
+        try updateSessions { saved in
             for session in sessions {
                 if let index = saved.firstIndex(where: { $0.id == session.id }) { saved[index] = session }
                 else { saved.append(session) }
             }
-            contents.sessions = saved
         }
     }
 
     public func deleteSavedSession(_ id: UUID) throws {
-        try updateContents { $0.sessions?.removeAll { $0.id == id } }
+        try updateSessions { $0.removeAll { $0.id == id } }
+    }
+
+    /// Drops records whose host is no longer in the vault, e.g. after a pull.
+    /// Reads the host list from the vault itself, so a failed load elsewhere
+    /// can never empty the records.
+    public func deleteSavedSessionsForMissingHosts() throws {
+        guard let vault = try read() else { return }
+        let hostIDs = Set(try decodeContents(vault, key: unlockedKey(vault)).hosts.map(\.id))
+        try updateSessions { $0.removeAll { !hostIDs.contains($0.hostID) } }
+    }
+
+    private func updateSessions(_ update: (inout [SavedSession]) -> Void) throws {
+        guard let vault = try read() else { throw VaultError.locked }
+        let key = try unlockedKey(vault)
+        var sessions = try localSessions(vault, key: key)
+        let before = sessions
+        update(&sessions)
+        if sessions != before { try writeSessions(sessions, vault: vault, key: key) }
+    }
+
+    /// A file that does not open with this vault's key (the vault was
+    /// re-created elsewhere under the same ID) holds nothing usable here; it
+    /// reads as empty and is replaced by the next checkpoint.
+    private func localSessions(_ vault: Vault, key: SymmetricKey) throws -> [SavedSession] {
+        let url = sessionsFileURL(for: vault.id)
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        guard let file = try? JSONDecoder().decode(SessionsFile.self, from: Data(contentsOf: url)),
+              file.version == 1, file.vault == vault.id,
+              let plain = try? open(file.payload, key: key, context: Self.sessionsContext(vault)),
+              let sessions = try? JSONDecoder().decode([SavedSession].self, from: plain) else { return [] }
+        return sessions
+    }
+
+    /// Deliberately silent: sync watches vault writes only, and this file is
+    /// never pushed.
+    private func writeSessions(_ sessions: [SavedSession], vault: Vault, key: SymmetricKey) throws {
+        let url = sessionsFileURL(for: vault.id)
+        let payload = try seal(JSONEncoder().encode(sessions), key: key, context: Self.sessionsContext(vault))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try encoder.encode(SessionsFile(vault: vault.id, payload: payload)).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    /// Vaults written before sessions moved out carry them in the payload.
+    /// Move them to the local file (local records win), then rewrite the
+    /// vault without them. Runs only after the master password is verified.
+    private func migrateEmbeddedSessions(_ vault: inout Vault, contents: inout Contents, key: SymmetricKey) throws {
+        guard let embedded = contents.sessions else { return }
+        if !embedded.isEmpty {
+            var sessions = try localSessions(vault, key: key)
+            for session in embedded where !sessions.contains(where: { $0.id == session.id }) {
+                sessions.append(session)
+            }
+            try writeSessions(sessions, vault: vault, key: key)
+        }
+        contents.sessions = nil
+        vault.payload = try seal(JSONEncoder().encode(contents), key: key, context: vault.context)
+        try write(vault)
     }
 
     private func updateContents(_ update: (inout Contents) -> Void) throws {
@@ -209,6 +288,7 @@ public struct PasswordStore: Sendable {
         let key = try unlockedKey(vault)
         var contents = try decodeContents(vault, key: key)
         update(&contents)
+        contents.sessions = nil
         vault.payload = try seal(JSONEncoder().encode(contents), key: key, context: vault.context)
         try write(vault)
     }

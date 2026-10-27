@@ -56,7 +56,7 @@ cargo clippy --all-targets && cargo fmt --check
 | --- | --- | --- |
 | Entry, menus | `Sources/Maine/App/MaineApp.swift`, `App/AppState.swift`, `App/MenuBarController.swift` | Window state shared by menus and views; master-password gate on every launch; the resident status item that restores the window |
 | Hosts | `Sources/Maine/Models/Host*.swift` | Host model, validation, vault-backed store |
-| Vault | `Sources/Maine/Services/PasswordStore.swift`, `LocalVaultKeyStore.swift` | Single active file `passwords.maine` (v2, AES-256-GCM + PBKDF2-SHA256); Keychain holds the session helper key and sync tokens (service `Maine Sync`) |
+| Vault | `Sources/Maine/Services/PasswordStore.swift`, `LocalVaultKeyStore.swift` | Single active file `passwords.maine` (v2, AES-256-GCM + PBKDF2-SHA256); session snapshots in device-local `sessions-<vault id>.maine` under the same key; Keychain holds the session helper key and sync tokens (service `Maine Sync`) |
 | SSH | `Sources/Maine/Services/SSHTarget.swift`, `SSHConfigFile.swift`, `SSHAskPass.swift` | Builds the exact `ssh` command line; reads `~/.ssh/config`; supplies saved passwords |
 | Sessions | `Sources/Maine/Sessions/SessionManager.swift`, `TerminalSession.swift` | Open sessions keyed by session UUID; terminal NSView owned by the session, never reparented |
 | Sync | `Sources/Maine/Sync/*.swift` | Profiles + Keychain tokens; whole-file create/join/pull/push with conflict copies; triggers (unlock pull, 2 s write debounce, 30 s HEAD poll, lock/quit flush); one active workspace, switching parks the outgoing vault |
@@ -88,7 +88,7 @@ Sync server (`apps/sync-server`, Rust + axum + embedded SQLite):
 ## Invariants — do not break these
 
 1. **Master password on every launch.** `prepareForLaunch()` always locks; password input is disabled while locked. There is no "remember me".
-2. **One active vault file.** `~/Library/Application Support/Maine/passwords.maine` holds hosts, credentials and session snapshots together. `hosts.json` is a legacy plaintext leftover — never read it as live storage, and tell users to archive/remove it after migration.
+2. **One active vault file.** `~/Library/Application Support/Maine/passwords.maine` holds hosts and credentials. Session snapshots (names + scrollback) live beside it in `sessions-<vault id>.maine`, sealed with the vault key and never synced; nothing writes sessions back into the vault payload. `hosts.json` is a legacy plaintext leftover — never read it as live storage, and tell users to archive/remove it after migration.
 3. **Sessions are keyed by session UUID, not host UUID.** Restore reconnects automatically after unlock, with persisted history kept as scrollback (never replayed as commands).
 4. **Close vs quit.** Explicit close deletes the encrypted session record first (failure keeps the session visible). Quit only stops processes and keeps records.
 5. **Terminals stay mounted.** Switching sessions must never reparent a terminal NSView. Layout is bounded by the window viewport — terminal fitting size or banners must not grow the split view (this was a real shipped regression: exit-255 overflow).
@@ -97,7 +97,7 @@ Sync server (`apps/sync-server`, Rust + axum + embedded SQLite):
 8. **Diagnostics are metadata-only and opt-in.** Never log passwords, keystrokes, hostnames, usernames, custom session names, terminal contents or screenshots. Debug regions (`.debugRegion`) record geometry only. The sync server obeys the same rule: request logs are method/path/status at debug level, never tokens, headers or bodies.
 9. **Motion respects the OS.** All transitions/press feedback check Reduce Motion.
 10. **Menu bar resident.** Closing the window hides it; the app must keep running (no terminate-after-last-window, no automatic termination) and the vault stays unlocked until Quit or an explicit lock. The status item restores the window; there is no Dock icon.
-11. **Sync is whole-file and opaque.** The synced object is `passwords.maine` byte for byte; tokens live in secure storage (never in the vault, never logged), the master password never leaves the device, and sync runs only while the vault is unlocked. Adopting a remote vault must keep a conflict copy of a dirty local file, close only sessions whose hosts are gone, and never reparent or restart a surviving terminal. Android does not implement the protocol yet.
+11. **Sync is whole-file and opaque.** The synced object is `passwords.maine` byte for byte; tokens live in secure storage (never in the vault, never logged), the master password never leaves the device, and sync runs only while the vault is unlocked. Adopting a remote vault must keep a conflict copy of a dirty local file, close only sessions whose hosts are gone, and never reparent or restart a surviving terminal. Session snapshots never travel with the vault. Android does not implement the protocol yet.
 
 ## Working agreement
 

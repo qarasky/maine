@@ -61,7 +61,7 @@ The first device creates a slot and receives a token like `maine-2F7K-9QX2-…`;
 
 ## Saved sessions
 
-Sessions automatically save their name and the terminal's currently retained plain-text buffer (up to 1 MiB), periodically and before normal quit or vault lock. It is a snapshot, not a full activity log: colors, cursor state, remote processes and shell state are not saved. Output can contain sensitive data, so snapshots are encrypted along with hosts and passwords.
+Sessions automatically save their name and the terminal's currently retained plain-text buffer (up to 1 MiB), periodically and before normal quit or vault lock. It is a snapshot, not a full activity log: colors, cursor state, remote processes and shell state are not saved. Output can contain sensitive data, so snapshots are encrypted with the vault's key. They stay on this Mac: snapshots live in their own file, `sessions-<vault id>.maine`, next to `passwords.maine`, and are never part of the synced vault. Another device sees your hosts but not your sessions or their scrollback, and session checkpoints never trigger a sync push. Vaults written by older builds, which kept snapshots inside `passwords.maine`, move them to the local file on the next unlock.
 
 Renaming updates the persisted name immediately. Normal quit keeps session records; only explicit **Close Session**, **×**, **Close Every Session**, or deleting the host removes them. While the vault is locked, autosave pauses; closing persisted sessions requires unlocking so their records can actually be removed. Quitting while locked retains the last checkpoint.
 

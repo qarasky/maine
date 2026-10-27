@@ -199,8 +199,18 @@ migration. Subsequent unlocks never re-import stale metadata. Explicit JSON URLs
 in `HostStore` remain a legacy test/tooling adapter, not the application's storage.
 There is no host-import UI; OpenSSH still reads its own configuration normally.
 
-The encrypted payload has an optional `sessions` array so earlier version-2
-vaults remain readable. Each saved snapshot contains an independent UUID, host
+Session snapshots are device-local and never part of the synced vault. They
+live next to it in `sessions-<vault UUID>.maine` (`0600`): a small JSON
+envelope whose payload is the snapshot array sealed with AES-256-GCM under the
+vault's key, with the vault's additional data plus `:sessions`. They lock and
+unlock with the vault, but another device that opens the same
+`passwords.maine` sees none of them, and writing them never posts the
+vault-write notification that schedules a sync push. Keying the file by vault
+UUID keeps each workspace's sessions apart without moving files on a switch. A
+file that does not open with the current key reads as empty. The vault payload
+keeps an optional `sessions` array only for older version-2 vaults: on unlock
+its records move to the local file (local records win) and the vault is
+rewritten without it; no write puts sessions back. Each saved snapshot contains an independent UUID, host
 UUID, display name, plain-text terminal history and save date. Sessions checkpoint
 automatically on creation, every two seconds while unlocked, and before normal
 quit or vault lock. History is capped at 1 MiB from SwiftTerm's retained buffer.
@@ -208,7 +218,9 @@ Unchanged snapshots are not rewritten. Explicit close deletes the encrypted
 record before stopping/removing the runtime session; a failed delete keeps the
 session visible and reports an error. Quit checkpoints and stops processes without
 deleting their records. While locked, the last checkpoint is retained and closing
-requires unlocking. Deleting a host deletes its records in the same atomic vault write.
+requires unlocking. Deleting a host deletes its metadata and credential in one atomic vault write,
+then its local records; adopting a pulled vault drops records whose host the
+vault no longer has.
 
 After unlock, saved snapshots restore their history as scrollback and reconnect
 automatically. Repeated restores skip already-mounted saved IDs. Restored output is fed only
@@ -320,7 +332,7 @@ entirely.
 The load-bearing rule holds: a pulled vault is adopted with the same rules as
 a local one. The file is replaced atomically, a dirty local file is kept as
 `passwords.conflict-….maine` first, sessions whose hosts disappeared are
-closed without deleting their records, surviving terminals are never
+closed and their local records dropped, surviving terminals are never
 reparented or restarted, and history is restored as scrollback, never replayed
 as commands. Several profiles can be paired, but exactly one is active; the
 others keep their own vault as `passwords.workspace-<id>.maine` and switching

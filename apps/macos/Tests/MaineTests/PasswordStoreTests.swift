@@ -45,12 +45,14 @@ struct PasswordStoreTests {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let original = PasswordStore(fileURL: directory.appendingPathComponent("original.maine"),
                                      keychainService: "app.maine.tests.\(UUID())")
-        let copy = PasswordStore(fileURL: directory.appendingPathComponent("copy.maine"),
+        let otherInstallation = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let copy = PasswordStore(fileURL: otherInstallation.appendingPathComponent("copy.maine"),
                                  keychainService: "app.maine.tests.\(UUID())")
         defer {
             try? original.lock()
             try? copy.lock()
             try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: otherInstallation)
         }
         let hostID = UUID()
         let host = Maine.Host(id: hostID, name: "Private server", hostname: "private.example", username: "private-user")
@@ -62,6 +64,7 @@ struct PasswordStoreTests {
         for value in [host.name, host.hostname, host.username, hostID.uuidString, "shared test password", saved.name, saved.history] {
             #expect(!text.contains(value))
         }
+        try FileManager.default.createDirectory(at: otherInstallation, withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: original.fileURL, to: copy.fileURL)
         #expect(throws: PasswordStore.VaultError.self) { try copy.password(for: hostID) }
         let before = try Data(contentsOf: copy.fileURL)
@@ -71,7 +74,9 @@ struct PasswordStoreTests {
         #expect(try Data(contentsOf: copy.fileURL) == before)
         try copy.unlock(masterPassword: "portable master password")
         #expect(try copy.hosts() == [host])
-        #expect(try copy.savedSessions() == [saved])
+        // Sessions are device-local and do not travel with the vault.
+        #expect(try copy.savedSessions().isEmpty)
+        #expect(try original.savedSessions() == [saved])
         #expect(try copy.password(for: hostID) == "shared test password")
         try copy.lock()
         #expect(throws: PasswordStore.VaultError.self) { try copy.hosts() }

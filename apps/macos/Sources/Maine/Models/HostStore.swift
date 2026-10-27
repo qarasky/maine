@@ -177,6 +177,13 @@ public final class HostStore: ObservableObject {
         try vault.deleteSavedSession(id)
     }
 
+    /// Session records are device-local, so a pulled vault that lost a host
+    /// does not take its records along; drop them here.
+    public func deleteSavedSessionsForMissingHosts() throws {
+        guard let vault else { return }
+        try vault.deleteSavedSessionsForMissingHosts()
+    }
+
     /// Writes the whole list, refusing to save a host that would not load back.
     @discardableResult
     public func save() -> Result<Void, HostStoreError> {

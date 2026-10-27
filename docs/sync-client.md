@@ -96,8 +96,8 @@ multi-vault feature and breaks the single-active-file invariant.
 | ----- | ------ |
 | App unlocks the vault | Pull |
 | Join flow completes | Pull (or push, for an empty slot) |
-| Every vault save (host edit, password change, session checkpoint) | Push, debounced ~2 s |
-| Vault lock or quit, after the final session checkpoint | Best-effort push with a short timeout |
+| Every vault save (host edit, password change) | Push, debounced ~2 s |
+| Vault lock or quit | Best-effort push with a short timeout |
 | App foreground | Pull |
 | While unlocked | Poll every 30 s (`HEAD`; `304` almost always) |
 | Before switching workspaces | Flush + push |
@@ -165,10 +165,13 @@ a "dirty" flag rather than starting a second request.
    host list, and close sessions whose host UUID is gone from the adopted
    vault. Sessions whose hosts still exist keep running — never reparent or
    restart a terminal for a sync.
-7. Note the accepted consequence: session snapshots travel with the vault,
-   so sessions saved on another device are restored and reconnected here,
-   exactly as a local restore would do. History is fed to the renderer as
-   scrollback and is never replayed as commands (existing behavior).
+7. Session snapshots do not travel: they live in a device-local file next
+   to the vault (`sessions-<vault id>.maine` on macOS), sealed with the
+   vault's key and never pushed. Writing them must not mark the vault dirty
+   or schedule a push. After adopting, drop local records whose host the
+   adopted vault no longer has. A pulled vault written by an older client may
+   still carry a `sessions` array in its payload; ignore it rather than
+   restoring another device's sessions, and never write one.
 
 ### Push
 

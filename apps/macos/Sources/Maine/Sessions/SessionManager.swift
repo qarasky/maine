@@ -271,12 +271,14 @@ public final class SessionManager: ObservableObject {
         }
     }
 
-    /// Closes sessions whose host disappeared from an adopted vault, without
-    /// touching the vault again: the records are already gone with it. Every
-    /// surviving host keeps its running terminal; a sync never reparents or
-    /// restarts one.
+    /// Closes sessions whose host disappeared from an adopted vault and drops
+    /// their device-local records, without writing the vault. Every surviving
+    /// host keeps its running terminal; a sync never reparents or restarts one.
     public func closeSessionsMissingFromHosts(_ hosts: [Host]) {
         let surviving = Set(hosts.map(\.id))
+        do { try store.deleteSavedSessionsForMissingHosts() }
+        catch PasswordStore.VaultError.locked { /* Pruned on the next adopt. */ }
+        catch { store.reportSaveFailure(error.localizedDescription) }
         let vanished = openSessions.filter { !surviving.contains($0.host.id) }
         guard !vanished.isEmpty else { return }
         let vanishedIDs = Set(vanished.map(\.id))
@@ -290,8 +292,8 @@ public final class SessionManager: ObservableObject {
         if selectedSessionWasClosed { selectedSessionID = openSessions.last?.id }
     }
 
-    /// Checkpoints every session into the vault that is about to be swapped
-    /// out, then stops and drops them without deleting their records. Used by
+    /// Checkpoints every session into the local records of the vault that is
+    /// about to be swapped out, then stops and drops them without deleting their records. Used by
     /// sync when the live vault file changes under a workspace switch.
     public func detachAllForVaultSwitch() throws {
         do { try checkpointSessions() }
