@@ -59,7 +59,7 @@ struct DebugLogTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).count == 2)
     }
 
-    @Test
+    @Test(.uiTest)
     func snapshotsExcludeFieldValuesTitlesAndPrivateHostData() throws {
         _ = NSApplication.shared
         let directory = directory()

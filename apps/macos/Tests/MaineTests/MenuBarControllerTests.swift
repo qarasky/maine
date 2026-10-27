@@ -14,7 +14,7 @@ struct MenuBarControllerTests {
         return window
     }
 
-    @Test
+    @Test(.uiTest)
     func theCloseButtonHidesTheWindowInsteadOfClosingIt() throws {
         _ = NSApplication.shared
         let controller = MenuBarController.shared
@@ -36,7 +36,7 @@ struct MenuBarControllerTests {
         #expect(!window.isVisible)
     }
 
-    @Test
+    @Test(.uiTest)
     func hidingAndRestoringKeepsTheSameWindow() throws {
         _ = NSApplication.shared
         let controller = MenuBarController.shared
@@ -58,7 +58,7 @@ struct MenuBarControllerTests {
         #expect(window.standardWindowButton(.closeButton)?.target === controller)
     }
 
-    @Test
+    @Test(.uiTest)
     func commandWHidesTheWindowAndShiftCommandWIsLeftAlone() throws {
         _ = NSApplication.shared
         let controller = MenuBarController.shared

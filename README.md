@@ -102,7 +102,8 @@ Tests:
 
 ```sh
 cd apps/macos
-swift test
+swift test                     # everything that does not open a window
+MAINE_UI_TESTS=1 swift test    # plus the window/layout tests (they take over the screen; CI always runs them)
 ```
 
 The suite covers the configuration format, host validation, file persistence and permissions, the exact `ssh` command lines Maine builds, the `~/.ssh/config` reader, and the PTY session lifecycle (start, output, exit, disconnect) using a real child process. `packages/schema` has its own checks, which need nothing but Python 3:

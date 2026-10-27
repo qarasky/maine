@@ -14,7 +14,7 @@ struct WorkspaceLifecycleTests {
         }
     }
 
-    @Test(arguments: [false, true])
+    @Test(.uiTest, arguments: [false, true])
     func disconnectKeepsTerminalMountedAndReconnectReplacesIt(reportsFailure: Bool) async throws {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -74,7 +74,7 @@ struct WorkspaceLifecycleTests {
         #expect(manager.openHostIDs == [host.id])
     }
 
-    @Test
+    @Test(.uiTest)
     func repeatedSidebarSelectionDisconnectAndReconnectKeepsTheFullWindowIntact() async throws {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -162,7 +162,7 @@ struct WorkspaceLifecycleTests {
         #expect(manager.selectedSession == nil)
     }
 
-    @Test
+    @Test(.uiTest)
     func multipleSessionsForOneHostStayIndependent() async throws {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -341,7 +341,7 @@ struct WorkspaceLifecycleTests {
         #expect(restarted.openSessions.isEmpty)
     }
 
-    @Test
+    @Test(.uiTest)
     func desktopLayoutKeepsItsRhythmAcrossSizesAndAppearances() async throws {
         _ = NSApplication.shared
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -473,7 +473,7 @@ struct WorkspaceLifecycleTests {
         #expect(again.selectedSession?.customName == "Session 4")
     }
 
-    @Test
+    @Test(.uiTest)
     func passwordInputIsDisabledUntilUnlockedAndDisabledAgainOnLock() async throws {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -500,7 +500,7 @@ struct WorkspaceLifecycleTests {
         #expect(!input.isEnabled)
     }
 
-    @Test(arguments: [false, true])
+    @Test(.uiTest, arguments: [false, true])
     func exit255KeepsSplitViewHeaderAndTerminalInsideTheWindow(requestedDisconnect: Bool) async throws {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

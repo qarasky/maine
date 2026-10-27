@@ -50,6 +50,9 @@ jobs:
           # Enables SyncServerIntegrationTests: the macOS client against the
           # real Rust server.
           MAINE_SYNC_SERVER_BIN: ${{ github.workspace }}/apps/sync-server/target/release/maine-sync-server
+          # Window/layout tests are opt-in locally (they take over the
+          # screen); CI has no one to disturb, so run them here.
+          MAINE_UI_TESTS: "1"
         run: swift test
         working-directory: apps/macos
 

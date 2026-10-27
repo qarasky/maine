@@ -21,7 +21,8 @@ maine/
 Run app commands from `apps/macos`:
 
 ```sh
-swift test                                   # full suite (Swift Testing, includes sync engine tests)
+swift test                                   # default suite: no windows (skips `.uiTest` tests)
+MAINE_UI_TESTS=1 swift test                  # also the window/layout tests — opens, activates and resizes real windows
 MAINE_SYNC_SERVER_BIN="$PWD/../sync-server/target/release/maine-sync-server" \
     swift test --filter SyncServerIntegrationTests   # macOS client against the real server
 scripts/build-app.sh --release [--run]       # build/Maine.app, ad-hoc signed
@@ -31,7 +32,7 @@ build/Maine.app/Contents/MacOS/Maine --debug  # release build with debug logging
 (cd ../../packages/schema && python3 tools/validate.py)
 ```
 
-Tests run a real child process through a PTY and need a normal (non-headless) user session. Xcode 16+ must be selected via `xcode-select`; Command Line Tools alone cannot compile the SwiftUI views.
+Tests run a real child process through a PTY and need a normal (non-headless) user session. **Agents: never run with `MAINE_UI_TESTS=1` locally** — those tests take over the user's screen while they work; CI runs them. Mark any new test that creates an `NSWindow` with `@Test(.uiTest)`. Xcode 16+ must be selected via `xcode-select`; Command Line Tools alone cannot compile the SwiftUI views.
 
 Run Android commands from `apps/android` (JDK 17+, Android SDK with platform 36; JVM unit tests need no emulator):
 
