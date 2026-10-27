@@ -167,13 +167,17 @@ final class MaineAppDelegate: NSObject, NSApplicationDelegate {
         return .terminateNow
     }
 
+    /// Maine has a Dock icon as well as its menu bar item; clicking either
+    /// restores the hidden window (`applicationShouldHandleReopen`).
+    static let activationPolicy: NSApplication.ActivationPolicy = .regular
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Maine is a menu bar resident: the window can close while sessions
         // stay connected, so the process must not be reaped while idle. The
         // runtime opt-out also covers development runs without the bundle,
         // whose Info.plist is not read.
         ProcessInfo.processInfo.disableAutomaticTermination("Maine stays in the menu bar")
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(Self.activationPolicy)
         MenuBarController.shared.install()
         DebugLog.shared.record("application.launch", fields: [
             "format": "disconnect-diagnostics-v1",

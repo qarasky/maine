@@ -20,7 +20,7 @@ Maine is the shortest path between "I have a server" and "I am logged in". It is
 
 ## Quickstart
 
-1. **Build and open the app** ([from source](#build-and-develop)). On first launch, create the password vault with a master password of at least 12 characters. Maine asks for it on every launch; canceling leaves passwords locked. Closing the window does not quit: Maine stays in the menu bar, where a left-click reopens the window and a right-click offers Lock, Unlock and Quit.
+1. **Build and open the app** ([from source](#build-and-develop)). On first launch, create the password vault with a master password of at least 12 characters. Maine asks for it on every launch; canceling leaves passwords locked. Closing the window does not quit: Maine stays in the Dock and the menu bar. Clicking the Dock icon or left-clicking the menu bar item reopens the window; a right-click on the menu bar item offers Lock, Unlock and Quit.
 2. **Add a host.** Click **New Host** (or press ⌘N) and fill in a name, a hostname or IP, and a password. Port and username are optional — leave them at `22` and blank to let OpenSSH decide from `~/.ssh/config`. Passwords cannot be edited or saved while the vault is locked.
 3. **Connect.** Click a host in the sidebar to connect immediately. There is no intermediate host-details page.
 4. **Work.** Click the sidebar session's **×** (or press ⇧⌘W) to close it and disconnect. The saved host stays in the list. Double-click a session name to rename it in place (Return saves, Escape cancels).

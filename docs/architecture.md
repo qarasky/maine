@@ -245,8 +245,9 @@ respect accessibility Reduce Motion.
   and a quiet status indicator; the exact command is available in its help tooltip.
   Native search supports Command-F; Delete closes a session rather than deleting
   its host. See [the design references and layout decisions](macos-design.md).
-* **Resident in the menu bar.** The status item is the app's only presence:
-  there is no Dock icon (`LSUIElement`). Left-click restores the window;
+* **Resident in the menu bar and the Dock.** Maine uses the regular activation
+  policy, so it has a Dock icon; clicking it restores the hidden window
+  (`applicationShouldHandleReopen`). The status item stays too. Left-click restores the window;
   right-click offers Open, Lock or Unlock, and Quit. Quit checkpoints sessions
   and removes the vault key exactly like Command-Q.
 * **Copy Credentials.** **Host → Copy Credentials** and a host's context menu

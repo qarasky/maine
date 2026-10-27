@@ -89,6 +89,18 @@ struct MenuBarControllerTests {
         #expect(!window.isVisible)
     }
 
+    /// Maine shows a Dock icon (and keeps its menu bar item): the bundle must
+    /// not opt out of the Dock, and launch must use the regular policy.
+    @Test
+    func theAppAppearsInTheDock() throws {
+        #expect(MaineAppDelegate.activationPolicy == .regular)
+        let plistURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/Info.plist")
+        let plist = try #require(NSDictionary(contentsOf: plistURL))
+        #expect(plist["LSUIElement"] == nil)
+    }
+
     @Test
     func theAppDoesNotQuitWhenItsLastWindowCloses() {
         _ = NSApplication.shared
