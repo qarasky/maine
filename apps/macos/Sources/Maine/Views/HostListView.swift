@@ -11,6 +11,8 @@ struct HostListView: View {
     @State private var renamingSessionID: UUID?
     @State private var renameText = ""
     @State private var searchFocusRequest = 0
+    @State private var hoveredHostID: Host.ID?
+    @State private var copiedHostID: Host.ID?
     @FocusState private var renameFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -59,6 +61,11 @@ struct HostListView: View {
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            if hoveredHostID == host.id || copiedHostID == host.id {
+                                copyButton(host)
+                                    .padding(.trailing, !showsChildren && !hostSessions.isEmpty ? 0 : DesktopMetrics.rowInset)
+                                    .transition(.opacity)
+                            }
                             if !showsChildren, let session = hostSessions.first {
                                 closeButton(session)
                                     .padding(.trailing, DesktopMetrics.rowInset)
@@ -66,6 +73,11 @@ struct HostListView: View {
                             }
                         }
                         .modifier(SidebarRowHighlight(selected: !showsChildren && sessions.selectedHostID == host.id))
+                        .onHover { inside in
+                            if inside { hoveredHostID = host.id }
+                            else if hoveredHostID == host.id { hoveredHostID = nil }
+                        }
+                        .animation(reduceMotion ? nil : .easeInOut(duration: 0.12), value: hoveredHostID == host.id)
                         .debugRegion("host-row", sessionID: host.id)
                         .contextMenu { contextMenu(for: host) }
 
@@ -142,6 +154,29 @@ struct HostListView: View {
         .help("Close session")
         .accessibilityLabel("Close \(sessions.label(for: session)) for \(session.host.displayName)")
         .accessibilityIdentifier("close-session-\(session.id.uuidString)")
+    }
+
+    /// Copies the host's IP, username and saved password as plain text. Shown
+    /// only while the row is hovered; briefly turns into a checkmark.
+    private func copyButton(_ host: Host) -> some View {
+        Button {
+            guard CredentialCommands.copy(host: host, appState: appState) else { return }
+            copiedHostID = host.id
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.2))
+                if copiedHostID == host.id { copiedHostID = nil }
+            }
+        } label: {
+            Image(systemName: copiedHostID == host.id ? "checkmark" : "doc.on.doc")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(MotionButtonStyle())
+        .help("Copy IP, username and password")
+        .accessibilityLabel("Copy credentials for \(host.displayName)")
+        .accessibilityIdentifier("copy-credentials-\(host.id.uuidString)")
     }
 
     private func sessionRow(_ session: TerminalSession) -> some View {

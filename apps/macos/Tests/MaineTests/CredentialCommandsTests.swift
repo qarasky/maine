@@ -35,10 +35,10 @@ struct CredentialCommandsTests {
         CredentialCommands.copy(host: host, appState: state, passwords: passwords, pasteboard: pasteboard)
 
         #expect(pasteboard.string(forType: .string) == """
-        [ip] 10.0.0.4
-        [port] 2222
-        [username] root
-        [password] abcdef123
+        IP: 10.0.0.4
+        port: 2222
+        username: root
+        password: abcdef123
         """)
     }
 

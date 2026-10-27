@@ -42,6 +42,10 @@ as a custom imitation: Maine supports macOS 14 and uses native system materials.
   an empty host list and a locked vault have distinct explanations and actions.
 - Hover and selection share the exact same rounded row. Inactive-window selection
   is subdued. Close controls keep fixed hit areas; buttons no longer scale.
+- Hovering a host row reveals a copy button (24-point hit area, same style as
+  close) just left of its close control, or at the row's trailing edge when the
+  host has no session. It copies the IP, username and password and shows a
+  checkmark for about a second; it never shifts the row's highlight bounds.
 - Name and endpoint are the connection hierarchy. The full SSH command remains
   available in the endpoint's help tooltip; status uses a small icon and label,
   not a large bright capsule. Restored sessions reconnect on their own, so the

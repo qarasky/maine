@@ -250,10 +250,11 @@ respect accessibility Reduce Motion.
   (`applicationShouldHandleReopen`). The status item stays too. Left-click restores the window;
   right-click offers Open, Lock or Unlock, and Quit. Quit checkpoints sessions
   and removes the vault key exactly like Command-Q.
-* **Copy Credentials.** **Host → Copy Credentials** and a host's context menu
-  write `[ip]`, `[port]` (only when not 22), `[username]` (when set) and
-  `[password]` (when a saved password is unlocked) to the pasteboard as plain
-  text. A locked vault requests the master password first; the debug log
+* **Copy Credentials.** **Host → Copy Credentials**, a host's context menu and
+  the copy button that appears while hovering a host row (left of its close
+  control; a checkmark confirms the copy) write `IP:`, `port:` (only when not
+  22), `username:` (when set) and `password:` (when a saved password is
+  unlocked), one per line, to the pasteboard as plain text. A locked vault requests the master password first; the debug log
   records the host ID only, never the block, and the text stays on the
   clipboard until something else replaces it.
 * **State lives where it is used.** The host list is owned by `HostStore`, open

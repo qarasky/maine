@@ -69,7 +69,7 @@ empty-state text, and backgrounding does not lock the vault.
 | --- | --- | --- |
 | Add / edit / delete host | ✅ | ✅ |
 | Duplicate host | ✅ (name gets ` copy`) | ❌ |
-| Copy credentials (plain-text block) | ✅ Host menu + right-click | ❌ (see §6.4) |
+| Copy credentials (plain-text block) | ✅ Host menu + right-click + hover button | ❌ (see §6.4) |
 | Validation (name, hostname rules, port 1–65535, username rules) | ✅ | ✅ |
 | Username may be blank to defer to ssh config | ✅ | ❌ editor requires it (model allows blank) |
 | Password mandatory to save a host | ✅ | ✅ |
@@ -277,10 +277,10 @@ macOS implements everything the other client targets, except:
    exist, in this order:
 
    ```
-   [ip] <hostname>
-   [port] <port>          (only when the port is not 22)
-   [username] <user>      (only when set)
-   [password] <password>  (only when saved and the vault is unlocked)
+   IP: <hostname>
+   port: <port>          (only when the port is not 22)
+   username: <user>      (only when set)
+   password: <password>  (only when saved and the vault is unlocked)
    ```
 
    A locked vault must request the master password first (or omit the password
