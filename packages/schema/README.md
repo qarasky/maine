@@ -2,7 +2,7 @@
 
 This package defines the one file Maine writes: the saved host list. It is
 versioned JSON, it is deliberately small, and it is the contract between every
-Maine client — the macOS application today, and the Windows, Linux and Android
+Maine client — the macOS application today, and the Linux and Android
 clients later.
 
 Nothing else is shared between clients. There is no account and no service of
@@ -16,7 +16,6 @@ the server sees only opaque bytes and this format is always written locally.
 | -------- | --------------------------------------------------- |
 | macOS    | `~/Library/Application Support/Maine/hosts.json`     |
 | Linux    | `$XDG_CONFIG_HOME/maine/hosts.json` (planned)        |
-| Windows  | `%APPDATA%\Maine\hosts.json` (planned)               |
 | Android  | app-private `passwords.maine` vault (no plaintext file) |
 
 Each client owns its own file. Sync, when enabled, moves the encrypted vault as

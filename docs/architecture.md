@@ -1,23 +1,20 @@
 # Architecture
 
-Maine is a monorepo with three clients so far: macOS (shipped), Windows and
-Android (both in progress). This document explains how the macOS app is put
-together, which decisions are load-bearing, and how the other clients map
-them. The Windows layout is documented in
-[`apps/windows/README.md`](../apps/windows/README.md), the Android layout in
-[`apps/android/README.md`](../apps/android/README.md).
+Maine is a monorepo with two clients so far: macOS (shipped) and Android (in
+progress). This document explains how the macOS app is put together, which
+decisions are load-bearing, and how the Android client maps them. The Android
+layout is documented in [`apps/android/README.md`](../apps/android/README.md).
 
 ## Why a monorepo
 
-The stated future is four clients — macOS now, Windows and Android in
-progress, Linux later.
+The stated future is three clients — macOS now, Android in progress, Linux
+later.
 What those clients share is not code, it is **one file format**: the saved host
 list. So the repository splits along that line:
 
 ```
 maine/
 ├── apps/macos/          the macOS client: Swift, SwiftUI, AppKit
-├── apps/windows/        the Windows client: C#, WPF, ConPTY, WebView2 + xterm.js
 ├── apps/android/        the Android client: Kotlin, Compose, sshj
 ├── apps/sync-server/    the sync server: Rust, axum, embedded SQLite
 ├── packages/schema/     the shared, language-neutral configuration format
@@ -34,26 +31,13 @@ toolchains. The format is the contract.
 `apps/linux` is not created yet. An empty placeholder would suggest
 progress that does not exist.
 
-### The Windows mapping
+### The vault across clients
 
-The Windows client keeps the same architecture and the same byte shapes, with
-platform pieces swapped:
-
-| macOS | Windows |
-| ----- | ------- |
-| `forkpty` + `ssh` child | ConPTY + `ssh.exe` child (`ConPtySession`) |
-| SwiftTerm terminal view | xterm.js in one WebView2 per session, all mounted, one visible |
-| `~/Library/Application Support/Maine/passwords.maine` | `%APPDATA%\Maine\passwords.maine` (user-only ACL instead of `0600`) |
-| Login Keychain session key | DPAPI-protected key file, deleted on lock/quit |
-| `SSH_ASKPASS` = app bundle executable | `SSH_ASKPASS` = `Maine.exe` (same helper protocol) |
-| `~/.ssh/config` | `%USERPROFILE%\.ssh\config` (same reader, same `Include` rules) |
-
-The vault file is byte-compatible across all three clients: same PBKDF2-SHA256
+The vault file is byte-compatible between macOS and Android: same PBKDF2-SHA256
 (600,000 iterations), same AES-256-GCM additional data
 (`maine-vault:{version}:{UPPERCASE-UUID}:{base64-salt}:{iterations}`),
 same nonce|ciphertext|tag layout, uppercase UUIDs, dates as seconds since
-1970. `Maine.Core` builds as plain `net8.0` with no UI dependencies so its
-test suite runs on any OS; only `Maine.App` needs Windows.
+1970.
 
 ## What a connection actually is
 
@@ -342,7 +326,7 @@ as commands. Several profiles can be paired, but exactly one is active; the
 others keep their own vault as `passwords.workspace-<id>.maine` and switching
 flushes, closes sessions and asks for the target vault's master password.
 
-Windows and Android do not speak the protocol yet.
+Android does not speak the protocol yet.
 
 ## Testing strategy
 
@@ -384,4 +368,4 @@ failure-prone part of the app is covered without needing a network.
   Those are all handled by `~/.ssh/config` today, and adding a second place to
   configure them would be a step backwards.
 * Sync requires a server the user runs; there is no hosted option. The macOS
-  client implements the protocol; Windows and Android do not yet.
+  client implements the protocol; Android does not yet.

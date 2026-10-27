@@ -2,7 +2,7 @@
 
 The server and its wire contract ([`sync-protocol.md`](sync-protocol.md)) are
 done, and **the macOS client implements this guide** (`Sources/Maine/Sync/`).
-Windows and Android have not started. This file remains the specification:
+Android has not started. This file remains the specification:
 what to store, when to talk to the server, exactly how to resolve conflicts,
 and how "workspaces" (several tokens on one device) should behave.
 
@@ -53,7 +53,6 @@ Per-platform secure storage:
 | Platform | Store |
 | -------- | ----- |
 | macOS | Keychain generic password, service `Maine Sync`, account = profile id |
-| Windows | DPAPI-protected file next to the existing vault key file |
 | Android | Keystore-encrypted preferences (the vault key itself stays memory-only; the token must persist across launches, so it needs Keystore-backed storage) |
 
 > macOS note: the current invariant says the Keychain holds only the session
@@ -221,14 +220,14 @@ Two distinct actions:
 
 ## Per-platform mapping
 
-| Concern | macOS | Windows | Android |
-| ------- | ----- | ------- | ------- |
-| HTTP | `URLSession` | `HttpClient` | `OkHttp` |
-| Secure token storage | Keychain | DPAPI file | Keystore-backed prefs |
-| Atomic vault replace | `Data.write(options: .atomic)` | write temp + `File.Replace` | temp file + `renameTo`, then fsync |
-| Scheduling | `Timer` + `scenePhase` | `DispatcherTimer` + window events | coroutine + lifecycle observer |
-| File permissions | `0600` (existing helper) | user-only ACL (existing pattern) | app-private storage (existing) |
-| Conflict copies | Same directory as the vault, same permission helper | Same | Same |
+| Concern | macOS | Android |
+| ------- | ----- | ------- |
+| HTTP | `URLSession` | `OkHttp` |
+| Secure token storage | Keychain | Keystore-backed prefs |
+| Atomic vault replace | `Data.write(options: .atomic)` | temp file + `renameTo`, then fsync |
+| Scheduling | `Timer` + `scenePhase` | coroutine + lifecycle observer |
+| File permissions | `0600` (existing helper) | app-private storage (existing) |
+| Conflict copies | Same directory as the vault, same permission helper | Same |
 
 Conflict, pre-sync and workspace files all use the same naming scheme and
 permissions as the vault. They are ordinary vault files: openable by pointing
