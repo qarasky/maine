@@ -35,7 +35,8 @@ as a custom imitation: Maine supports macOS 14 and uses native system materials.
 - A real resizable `HSplitView` without NavigationSplitView's unneeded navigation
   toolbar/insets. Set the initial sidebar to 260 points; retain 220–340 resizing.
 - One desktop spacing vocabulary in `DesktopMetrics`: 10-point sidebar margins,
-  44-point two-line host rows, 30-point session rows, 20-point child indentation,
+  44-point two-line host rows, 30-point session rows, 26-point group headers,
+  20-point child indentation,
   56-point connection header, 36-point footer, 12-point terminal breathing room.
   These are Maine's choices, not prescribed Apple measurements.
 - Native `NSSearchField`, with its clear button and Command-F. Search results,
@@ -46,6 +47,13 @@ as a custom imitation: Maine supports macOS 14 and uses native system materials.
   close) just left of its close control, or at the row's trailing edge when the
   host has no session. It copies the IP, username and password and shows a
   checkmark for about a second; it never shifts the row's highlight bounds.
+- Groups are quiet section headers, in the style of Finder's sidebar: a rotating
+  chevron, a secondary semibold name, and a host count only when collapsed. The
+  whole header toggles and shares the row hover highlight. Hosts inside a group
+  are not indented, so the two-line host rhythm is unchanged. Drop targets show
+  an accent insertion line above a host, or an accent outline around a group
+  header, an empty group's "Drag hosts here" row or the bottom "Remove from
+  group" strip. Collapse and drop animations respect Reduce Motion.
 - Name and endpoint are the connection hierarchy. The full SSH command remains
   available in the endpoint's help tooltip; status uses a small icon and label,
   not a large bright capsule. Restored sessions reconnect on their own, so the

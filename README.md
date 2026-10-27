@@ -59,6 +59,14 @@ The first device creates a slot and receives a token like `maine-2F7K-9QX2-…`;
 
 [apps/sync-server/README.md](apps/sync-server/README.md) covers deployment: reverse-proxy TLS, systemd, Docker, and the `--create-secret` switch for servers that are reachable by strangers.
 
+## Groups
+
+Organise hosts into collapsible groups in the sidebar. **Host → New Group** (⇧⌘N), the folder button in the sidebar footer, or **Move to Group → New Group…** on a host's context menu creates one and starts renaming it. Click a group's header to collapse or expand it; right-click it to rename or delete it (deleting a group keeps its hosts, ungrouped).
+
+Drag a host onto a group header to add it to the end of that group, onto another host to place it just above that host (in that host's group), or onto the strip at the bottom of the list to take it out of its group. Drag a group header onto another group header to reorder groups. **Move to Group** in a host's context menu and the **Group** picker in the host editor do the same without dragging. Ungrouped hosts stay at the top. While searching, groups with a match are shown expanded.
+
+Groups and their order live in the vault, so they sync with your hosts. Which groups are collapsed is remembered per Mac, encrypted next to the saved sessions, and never synced. The Android client does not show groups yet, and saving a host there drops them.
+
 ## Saved sessions
 
 Sessions automatically save their name and the terminal's currently retained plain-text buffer (up to 1 MiB), periodically and before normal quit or vault lock. It is a snapshot, not a full activity log: colors, cursor state, remote processes and shell state are not saved. Output can contain sensitive data, so snapshots are encrypted with the vault's key. They stay on this Mac: snapshots live in their own file, `sessions-<vault id>.maine`, next to `passwords.maine`, and are never part of the synced vault. Another device sees your hosts but not your sessions or their scrollback, and session checkpoints never trigger a sync push. Vaults written by older builds, which kept snapshots inside `passwords.maine`, move them to the local file on the next unlock.

@@ -6,14 +6,29 @@ import Foundation
 /// The format is defined by `packages/schema/hosts.schema.json`.
 public struct HostConfiguration: Codable, Equatable, Sendable {
     /// The format version this build of Maine writes and understands.
-    public static let currentSchemaVersion = 1
+    /// Version 2 added `groups` and each host's optional `group`; version 1
+    /// files (no groups) are still read.
+    public static let currentSchemaVersion = 2
 
     public var schemaVersion: Int
+    public var groups: [HostGroup]
     public var hosts: [Host]
 
-    public init(schemaVersion: Int = HostConfiguration.currentSchemaVersion, hosts: [Host]) {
+    public init(schemaVersion: Int = HostConfiguration.currentSchemaVersion, groups: [HostGroup] = [], hosts: [Host]) {
         self.schemaVersion = schemaVersion
+        self.groups = groups
         self.hosts = hosts
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, groups, hosts
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        groups = try container.decodeIfPresent([HostGroup].self, forKey: .groups) ?? []
+        hosts = try container.decode([Host].self, forKey: .hosts)
     }
 
     /// The version this build of Maine understands, used to detect files
@@ -24,7 +39,7 @@ public struct HostConfiguration: Codable, Equatable, Sendable {
         /// The file is valid JSON but was written by a client with a newer
         /// schema. Maine must not load it, and must not overwrite it.
         case unsupportedVersion(Int)
-        /// The file is not readable as a version 1 host list.
+        /// The file is not readable as a host list.
         case malformed(String)
 
         public var errorDescription: String? {

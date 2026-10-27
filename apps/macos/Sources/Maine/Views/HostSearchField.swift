@@ -2,6 +2,8 @@ import SwiftUI
 
 extension Notification.Name {
     static let maineFocusSearch = Notification.Name("maine.focus-host-search")
+    /// Host → New Group: the sidebar creates the group and starts renaming it.
+    static let maineNewGroup = Notification.Name("maine.new-host-group")
 }
 
 /// Native search sizing, clear button, accessibility and text editing.

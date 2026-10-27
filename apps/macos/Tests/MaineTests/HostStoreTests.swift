@@ -186,4 +186,39 @@ struct HostStoreTests {
         #expect(store.host(id: host.id) == host)
         #expect(store.host(id: nil) == nil)
     }
+
+    @Test @MainActor
+    func layoutChangesAndCollapsedGroupsSurviveAReload() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let vault = PasswordStore(fileURL: directory.appendingPathComponent("vault.maine"),
+                                  keychainService: "app.maine.tests.\(UUID())")
+        defer { try? vault.lock(); try? FileManager.default.removeItem(at: directory) }
+        try vault.unlock(masterPassword: "layout test master password")
+        let store = HostStore(vault: vault)
+        let web = Maine.Host(name: "Web", hostname: "web.example")
+        try store.saveHost(web, password: "secret")
+        var group: HostGroup?
+        try store.updateLayout { layout in
+            group = layout.addGroup(named: "Prod")
+            layout.moveHost(web.id, toGroup: group?.id, before: nil)
+        }.get()
+        let prod = try #require(group)
+        store.setCollapsed(prod.id, true)
+
+        let reloaded = HostStore(vault: vault)
+        reloaded.load()
+        #expect(reloaded.groups == [prod])
+        #expect(reloaded.hosts.first?.groupID == prod.id)
+        #expect(reloaded.isCollapsed(prod.id))
+
+        // A rejected change leaves memory and disk untouched.
+        #expect(throws: HostStoreError.self) { try reloaded.updateLayout { try $0.renameGroup(prod.id, to: " ") }.get() }
+        #expect(reloaded.groups == [prod])
+
+        try reloaded.updateLayout { $0.deleteGroup(prod.id) }.get()
+        reloaded.setCollapsed(UUID(), false)
+        #expect(reloaded.collapsedGroupIDs.isEmpty)
+        #expect(try vault.collapsedGroupIDs().isEmpty)
+        #expect(reloaded.hosts.first?.groupID == nil)
+    }
 }

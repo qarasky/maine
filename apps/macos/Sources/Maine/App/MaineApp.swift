@@ -40,6 +40,9 @@ struct MaineApp: App {
             CommandMenu("Host") {
                 Button("New Host…") { appState.addHost() }
                     .keyboardShortcut("n", modifiers: .command)
+                Button("New Group") { NotificationCenter.default.post(name: .maineNewGroup, object: nil) }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
+                    .disabled(!appState.isVaultUnlocked)
 
                 Divider()
 

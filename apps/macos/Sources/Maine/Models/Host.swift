@@ -23,13 +23,24 @@ public struct Host: Identifiable, Codable, Hashable, Sendable {
     /// Empty means "not specified"; OpenSSH then takes the user from `~/.ssh/config`,
     /// the key that authenticates, or the local user name.
     public var username: String
+    /// The sidebar group this host belongs to; nil means ungrouped. Encoded as
+    /// `group` and omitted when nil, so an ungrouped host keeps the version 1
+    /// shape.
+    public var groupID: HostGroup.ID?
 
-    public init(id: UUID = UUID(), name: String, hostname: String, port: Int = Host.defaultPort, username: String = "") {
+    public init(id: UUID = UUID(), name: String, hostname: String, port: Int = Host.defaultPort, username: String = "",
+                groupID: HostGroup.ID? = nil) {
         self.id = id
         self.name = name
         self.hostname = hostname
         self.port = port
         self.username = username
+        self.groupID = groupID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, hostname, port, username
+        case groupID = "group"
     }
 
     // Lenient reading: a field that is absent or explicitly null falls back to
@@ -42,6 +53,7 @@ public struct Host: Identifiable, Codable, Hashable, Sendable {
         hostname = try container.decodeIfPresent(String.self, forKey: .hostname) ?? ""
         port = try container.decodeIfPresent(Int.self, forKey: .port) ?? Host.defaultPort
         username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
+        groupID = try container.decodeIfPresent(UUID.self, forKey: .groupID)
     }
 }
 

@@ -75,7 +75,8 @@ empty-state text, and backgrounding does not lock the vault.
 | Password mandatory to save a host | ✅ | ✅ |
 | Delete confirmation | ❌ acts immediately | ❌ acts immediately |
 | Search hosts | ✅ ⌘F, name/hostname/username | ✅ field, name/hostname only |
-| Ordering / drag-reorder | insertion order / ❌ | insertion order / ❌ |
+| Ordering / drag-reorder | ✅ drag hosts and groups (added after this audit) | insertion order / ❌ |
+| Host groups (collapsible, synced in the vault; collapse state per device) | ✅ (added after this audit) | ❌ ignores `groups`/`group`; **saving a host drops them** |
 | Empty-state message | ✅ (locked / none / no results) | ❌ |
 | ssh-config import UI | ❌ parser only, unused | ❌ parser only, unused |
 | ssh-config resolution shown in UI | ❌ resolver unused | ❌ resolver unused |

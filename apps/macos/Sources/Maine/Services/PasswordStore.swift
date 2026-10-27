@@ -47,6 +47,7 @@ public struct PasswordStore: Sendable {
     }
 
     private struct Contents: Codable {
+        var groups: [HostGroup]?
         var hosts: [Host] = []
         var passwords: [String: String] = [:]
         /// Only read, to migrate older vaults; never written.
@@ -153,6 +154,19 @@ public struct PasswordStore: Sendable {
         try updateContents { $0.hosts = hosts }
     }
 
+    public func groups() throws -> [HostGroup] {
+        guard let vault = try read() else { return [] }
+        return try decodeContents(vault, key: unlockedKey(vault)).groups ?? []
+    }
+
+    /// Groups and host order together in one atomic replacement.
+    public func saveLayout(groups: [HostGroup], hosts: [Host]) throws {
+        try updateContents {
+            $0.groups = groups.isEmpty ? nil : groups
+            $0.hosts = hosts
+        }
+    }
+
     /// Commit metadata and its credential together in one atomic replacement.
     public func saveHost(_ host: Host, password: String) throws {
         guard host.isValid, !password.isEmpty else { throw VaultError.invalidFile }
@@ -176,8 +190,8 @@ public struct PasswordStore: Sendable {
 
     // MARK: - Device-local sessions
 
-    /// Session snapshots (names and scrollback) never enter the synced vault.
-    /// They live in `sessions-<vault id>.maine` next to it, sealed with the
+    /// Session snapshots (names and scrollback) and which sidebar groups are
+    /// collapsed never enter the synced vault. They live in `sessions-<vault id>.maine` next to it, sealed with the
     /// same key and bound to the vault's context, so they unlock and lock
     /// with it but stay on this device. Keying by vault ID keeps each
     /// workspace's sessions apart without moving files on a switch.
@@ -191,16 +205,42 @@ public struct PasswordStore: Sendable {
     }
 
     private struct SessionsFile: Codable {
-        var version = 1
+        /// 1: payload is a bare `[SavedSession]`. 2: payload is `LocalState`.
+        var version = 2
         var vault: UUID
         var payload: Data
+    }
+
+    /// Everything this device remembers about a vault that must not sync.
+    private struct LocalState: Codable, Equatable {
+        var sessions: [SavedSession] = []
+        var collapsedGroups: [UUID] = []
+
+        init(sessions: [SavedSession] = []) { self.sessions = sessions }
+
+        // Fields added after version 2 shipped decode as their defaults.
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            sessions = try container.decodeIfPresent([SavedSession].self, forKey: .sessions) ?? []
+            collapsedGroups = try container.decodeIfPresent([UUID].self, forKey: .collapsedGroups) ?? []
+        }
     }
 
     private static func sessionsContext(_ vault: Vault) -> Data { vault.context + Data(":sessions".utf8) }
 
     public func savedSessions() throws -> [SavedSession] {
         guard let vault = try read() else { return [] }
-        return try localSessions(vault, key: unlockedKey(vault))
+        return try localState(vault, key: unlockedKey(vault)).sessions
+    }
+
+    /// Groups collapsed in this device's sidebar. Device-local: never synced.
+    public func collapsedGroupIDs() throws -> Set<UUID> {
+        guard let vault = try read() else { return [] }
+        return Set(try localState(vault, key: unlockedKey(vault)).collapsedGroups)
+    }
+
+    public func setCollapsedGroupIDs(_ ids: Set<UUID>) throws {
+        try updateLocalState { $0.collapsedGroups = ids.sorted { $0.uuidString < $1.uuidString } }
     }
 
     public func saveSession(_ session: SavedSession) throws {
@@ -233,32 +273,39 @@ public struct PasswordStore: Sendable {
     }
 
     private func updateSessions(_ update: (inout [SavedSession]) -> Void) throws {
+        try updateLocalState { update(&$0.sessions) }
+    }
+
+    private func updateLocalState(_ update: (inout LocalState) -> Void) throws {
         guard let vault = try read() else { throw VaultError.locked }
         let key = try unlockedKey(vault)
-        var sessions = try localSessions(vault, key: key)
-        let before = sessions
-        update(&sessions)
-        if sessions != before { try writeSessions(sessions, vault: vault, key: key) }
+        var state = try localState(vault, key: key)
+        let before = state
+        update(&state)
+        if state != before { try writeLocalState(state, vault: vault, key: key) }
     }
 
     /// A file that does not open with this vault's key (the vault was
     /// re-created elsewhere under the same ID) holds nothing usable here; it
     /// reads as empty and is replaced by the next checkpoint.
-    private func localSessions(_ vault: Vault, key: SymmetricKey) throws -> [SavedSession] {
+    private func localState(_ vault: Vault, key: SymmetricKey) throws -> LocalState {
         let url = sessionsFileURL(for: vault.id)
-        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        guard FileManager.default.fileExists(atPath: url.path) else { return LocalState() }
         guard let file = try? JSONDecoder().decode(SessionsFile.self, from: Data(contentsOf: url)),
-              file.version == 1, file.vault == vault.id,
-              let plain = try? open(file.payload, key: key, context: Self.sessionsContext(vault)),
-              let sessions = try? JSONDecoder().decode([SavedSession].self, from: plain) else { return [] }
-        return sessions
+              file.vault == vault.id,
+              let plain = try? open(file.payload, key: key, context: Self.sessionsContext(vault)) else { return LocalState() }
+        switch file.version {
+        case 1: return LocalState(sessions: (try? JSONDecoder().decode([SavedSession].self, from: plain)) ?? [])
+        case 2: return (try? JSONDecoder().decode(LocalState.self, from: plain)) ?? LocalState()
+        default: return LocalState()
+        }
     }
 
     /// Deliberately silent: sync watches vault writes only, and this file is
     /// never pushed.
-    private func writeSessions(_ sessions: [SavedSession], vault: Vault, key: SymmetricKey) throws {
+    private func writeLocalState(_ state: LocalState, vault: Vault, key: SymmetricKey) throws {
         let url = sessionsFileURL(for: vault.id)
-        let payload = try seal(JSONEncoder().encode(sessions), key: key, context: Self.sessionsContext(vault))
+        let payload = try seal(JSONEncoder().encode(state), key: key, context: Self.sessionsContext(vault))
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -272,11 +319,11 @@ public struct PasswordStore: Sendable {
     private func migrateEmbeddedSessions(_ vault: inout Vault, contents: inout Contents, key: SymmetricKey) throws {
         guard let embedded = contents.sessions else { return }
         if !embedded.isEmpty {
-            var sessions = try localSessions(vault, key: key)
-            for session in embedded where !sessions.contains(where: { $0.id == session.id }) {
-                sessions.append(session)
+            var state = try localState(vault, key: key)
+            for session in embedded where !state.sessions.contains(where: { $0.id == session.id }) {
+                state.sessions.append(session)
             }
-            try writeSessions(sessions, vault: vault, key: key)
+            try writeLocalState(state, vault: vault, key: key)
         }
         contents.sessions = nil
         vault.payload = try seal(JSONEncoder().encode(contents), key: key, context: vault.context)
@@ -296,7 +343,7 @@ public struct PasswordStore: Sendable {
     private func decodeContents(_ vault: Vault, key: SymmetricKey) throws -> Contents {
         guard vault.version == 2, let payload = vault.payload else { throw VaultError.invalidFile }
         let contents = try JSONDecoder().decode(Contents.self, from: open(payload, key: key, context: vault.context))
-        _ = try HostConfiguration(data: HostConfiguration(hosts: contents.hosts).encoded())
+        _ = try HostConfiguration(data: HostConfiguration(groups: contents.groups ?? [], hosts: contents.hosts).encoded())
         guard contents.passwords.keys.allSatisfy({ UUID(uuidString: $0) != nil }) else { throw VaultError.invalidFile }
         return contents
     }

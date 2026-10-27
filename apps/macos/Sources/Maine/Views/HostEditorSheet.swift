@@ -95,6 +95,15 @@ struct HostEditorSheet: View {
                 TextField("Username", text: draft.username)
                     .focused($focusedField, equals: .username)
 
+                if !store.groups.isEmpty {
+                    Picker("Group", selection: draft.groupID) {
+                        Text("None").tag(HostGroup.ID?.none)
+                        ForEach(store.groups) { group in
+                            Text(group.name).tag(HostGroup.ID?.some(group.id))
+                        }
+                    }
+                }
+
                 SecureField("Password", text: $password)
                     .disabled(!appState.isVaultUnlocked)
                 if !appState.isVaultUnlocked {

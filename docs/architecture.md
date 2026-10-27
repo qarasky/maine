@@ -172,6 +172,20 @@ terminal above it keeps whatever `ssh` printed.
   to the user and left exactly as it was. Maine does not "fix" or overwrite data
   it does not understand.
 * Saving is atomic and the file is written `0600`.
+* Groups (`HostGroup`: id + name, user-ordered) live in the vault payload next to
+  the hosts, so they sync. A host points at its group with `Host.groupID`
+  (encoded `group`, omitted when nil so an ungrouped host keeps the version 1
+  shape); a reference to a missing group reads as ungrouped. Display order is
+  the order of the host array: ungrouped hosts first, then each group with its
+  hosts in array order. `HostLayout` holds the rules for moving hosts and groups
+  (drop on a group appends, drop on a host inserts above it in that host's
+  group, deleting a group ungroups its hosts) and has no UI, so it is tested
+  directly. `HostStore.updateLayout` writes groups and hosts in one atomic vault
+  replacement and changes nothing in memory if that write fails. The host format
+  is now `schemaVersion` 2 (`packages/schema`); version 1 files still load.
+* Which groups are collapsed is device-local, stored in the same encrypted
+  `sessions-<vault UUID>.maine` file as the session snapshots (local file
+  version 2; version 1 files, a bare session array, still read).
 
 Version 2 contains a vault UUID, 32-byte random salt, PBKDF2-SHA256 iteration
 count (600,000), encrypted verification marker, and one encrypted JSON payload
@@ -232,7 +246,12 @@ respect accessibility Reduce Motion.
 
 ### Deliberate UI choices
 
-* **Single click connects.** The sidebar lists all hosts and sessions. There is
+* **Single click connects.** The sidebar lists all hosts and sessions, with
+  user-created groups as collapsible section headers below the ungrouped hosts.
+  Host rows and group headers use tap gestures rather than `Button`s, because
+  drag and drop cannot start from a SwiftUI button on macOS; they keep button
+  accessibility traits and actions. Drags carry only `maine-host:`/`maine-group:`
+  IDs as plain strings, never names. There is
   no All Hosts page, host-details page or separate tab strip. Each open session
   has a sibling close button that disconnects
   without deleting its saved host or activating the row being closed.

@@ -56,7 +56,7 @@ cargo clippy --all-targets && cargo fmt --check
 | Area | Files | Role |
 | --- | --- | --- |
 | Entry, menus | `Sources/Maine/App/MaineApp.swift`, `App/AppState.swift`, `App/MenuBarController.swift` | Window state shared by menus and views; master-password gate on every launch; the resident status item that restores the window |
-| Hosts | `Sources/Maine/Models/Host*.swift` | Host model, validation, vault-backed store |
+| Hosts | `Sources/Maine/Models/Host*.swift` | Host model, validation, vault-backed store; `HostGroup` + `HostLayout` (groups, ordering, drag-and-drop rules; schema v2) |
 | Vault | `Sources/Maine/Services/PasswordStore.swift`, `LocalVaultKeyStore.swift` | Single active file `passwords.maine` (v2, AES-256-GCM + PBKDF2-SHA256); session snapshots in device-local `sessions-<vault id>.maine` under the same key; Keychain holds the session helper key and sync tokens (service `Maine Sync`) |
 | SSH | `Sources/Maine/Services/SSHTarget.swift`, `SSHConfigFile.swift`, `SSHAskPass.swift` | Builds the exact `ssh` command line; reads `~/.ssh/config`; supplies saved passwords |
 | Sessions | `Sources/Maine/Sessions/SessionManager.swift`, `TerminalSession.swift` | Open sessions keyed by session UUID; terminal NSView owned by the session, never reparented |

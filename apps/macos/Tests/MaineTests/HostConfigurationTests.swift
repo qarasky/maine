@@ -29,13 +29,42 @@ struct HostConfigurationTests {
                 as? [String: Any]
         )
 
-        #expect(object["schemaVersion"] as? Int == 1)
+        #expect(object["schemaVersion"] as? Int == 2)
 
         let entry = try #require((object["hosts"] as? [[String: Any]])?.first)
         for key in ["id", "name", "hostname", "port", "username"] {
             #expect(entry[key] != nil, "\(key) is required by the schema")
         }
         #expect(entry["port"] as? Int == 22)
+        // An ungrouped host keeps exactly the version 1 shape.
+        #expect(entry["group"] == nil)
+    }
+
+    @Test
+    func groupsRoundTripAndHostsReferenceThemByID() throws {
+        let group = HostGroup(name: "Production")
+        var grouped = host
+        grouped.groupID = group.id
+        let configuration = HostConfiguration(groups: [group], hosts: [grouped])
+        let data = try configuration.encoded()
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let entry = try #require((object["hosts"] as? [[String: Any]])?.first)
+        #expect(entry["group"] as? String == group.id.uuidString)
+        #expect((object["groups"] as? [[String: Any]])?.first?["name"] as? String == "Production")
+
+        let decoded = try HostConfiguration(data: data)
+        #expect(decoded.groups == [group])
+        #expect(decoded.hosts == [grouped])
+    }
+
+    @Test
+    func versionOneFilesStillLoadWithoutGroups() throws {
+        let data = """
+        {"schemaVersion":1,"hosts":[{"id":"\(host.id.uuidString)","name":"Web","hostname":"example.com","port":22,"username":""}]}
+        """.data(using: .utf8)!
+        let decoded = try HostConfiguration(data: data)
+        #expect(decoded.groups.isEmpty)
+        #expect(decoded.hosts.first?.groupID == nil)
     }
 
     @Test
@@ -59,9 +88,9 @@ struct HostConfigurationTests {
 
     @Test
     func futureSchemaVersionIsRefused() throws {
-        let data = #"{"schemaVersion":2,"hosts":[]}"#.data(using: .utf8)!
+        let data = #"{"schemaVersion":3,"hosts":[]}"#.data(using: .utf8)!
 
-        #expect(throws: HostConfiguration.DecodeError.unsupportedVersion(2)) {
+        #expect(throws: HostConfiguration.DecodeError.unsupportedVersion(3)) {
             try HostConfiguration(data: data)
         }
     }

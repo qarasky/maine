@@ -31,6 +31,9 @@ public final class HostStore: ObservableObject {
     }
 
     @Published public private(set) var hosts: [Host] = []
+    @Published public private(set) var groups: [HostGroup] = []
+    /// Device-local, like saved sessions: which groups this sidebar collapsed.
+    @Published public private(set) var collapsedGroupIDs: Set<HostGroup.ID> = []
     @Published public private(set) var loadFailure: LoadFailure?
     @Published public private(set) var saveFailure: String?
 
@@ -57,13 +60,19 @@ public final class HostStore: ObservableObject {
     public func load() {
         if let vault {
             do {
-                hosts = try vault.hosts()
+                let layout = try HostLayout(groups: vault.groups(), hosts: vault.hosts())
+                hosts = layout.hosts
+                groups = layout.groups
+                collapsedGroupIDs = (try? vault.collapsedGroupIDs()) ?? []
                 loadFailure = nil
             } catch PasswordStore.VaultError.locked {
                 hosts = []
+                groups = []
+                collapsedGroupIDs = []
                 loadFailure = nil
             } catch {
                 hosts = []
+                groups = []
                 loadFailure = LoadFailure(message: error.localizedDescription, fileURL: fileURL)
             }
             return
@@ -78,10 +87,13 @@ public final class HostStore: ObservableObject {
         do {
             let data = try Data(contentsOf: fileURL)
             let configuration = try HostConfiguration(data: data)
-            hosts = configuration.hosts
+            let layout = HostLayout(groups: configuration.groups, hosts: configuration.hosts)
+            hosts = layout.hosts
+            groups = layout.groups
             loadFailure = nil
         } catch {
             hosts = []
+            groups = []
             loadFailure = LoadFailure(message: error.localizedDescription, fileURL: fileURL)
         }
     }
@@ -133,6 +145,41 @@ public final class HostStore: ObservableObject {
     public func delete(at offsets: IndexSet) {
         hosts.remove(atOffsets: offsets)
         _ = save()
+    }
+
+    // MARK: - Groups
+
+    public var layout: HostLayout { HostLayout(groups: groups, hosts: hosts) }
+
+    /// Applies a sidebar rearrangement and writes groups and host order in one
+    /// atomic vault replacement. Nothing changes in memory if the write fails.
+    @discardableResult
+    public func updateLayout(_ change: (inout HostLayout) throws -> Void) -> Result<Void, HostStoreError> {
+        var layout = self.layout
+        do { try change(&layout) }
+        catch let error as HostStoreError { return .failure(error) }
+        catch { return .failure(HostStoreError(error.localizedDescription)) }
+        guard layout != self.layout else { return .success(()) }
+        let previous = (hosts, groups)
+        hosts = layout.hosts
+        groups = layout.groups
+        let result = save()
+        if case .failure = result { (hosts, groups) = previous }
+        return result
+    }
+
+    public func isCollapsed(_ group: HostGroup.ID) -> Bool { collapsedGroupIDs.contains(group) }
+
+    public func setCollapsed(_ group: HostGroup.ID, _ collapsed: Bool) {
+        var ids = collapsedGroupIDs
+        if collapsed { ids.insert(group) } else { ids.remove(group) }
+        // Forget groups that no longer exist.
+        ids.formIntersection(groups.map(\.id))
+        collapsedGroupIDs = ids
+        guard let vault else { return }
+        do { try vault.setCollapsedGroupIDs(ids) }
+        catch PasswordStore.VaultError.locked { /* Remembered in memory only until unlock. */ }
+        catch { saveFailure = error.localizedDescription }
     }
 
     public func containsHost(named hostname: String) -> Bool {
@@ -199,11 +246,11 @@ public final class HostStore: ObservableObject {
 
         do {
             if let vault {
-                try vault.saveHosts(hosts)
+                try vault.saveLayout(groups: groups, hosts: hosts)
                 saveFailure = nil
                 return .success(())
             }
-            let data = try HostConfiguration(hosts: hosts).encoded()
+            let data = try HostConfiguration(groups: groups, hosts: hosts).encoded()
             let folder = fileURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(
                 at: folder,

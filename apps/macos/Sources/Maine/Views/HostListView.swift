@@ -13,11 +13,30 @@ struct HostListView: View {
     @State private var searchFocusRequest = 0
     @State private var hoveredHostID: Host.ID?
     @State private var copiedHostID: Host.ID?
+    @State private var renamingGroupID: HostGroup.ID?
+    @State private var groupRenameText = ""
+    @FocusState private var groupRenameFocused: Bool
+    @State private var dropTarget: SidebarDropTarget?
     @FocusState private var renameFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var visibleHosts: [Host] {
         store.hosts.filter(matches)
+    }
+
+    private var isFiltering: Bool {
+        !filter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// While searching, only groups with a match are shown, and they are
+    /// shown expanded; otherwise every group, empty ones included.
+    private var visibleGroups: [HostGroup] {
+        let layout = store.layout
+        return isFiltering ? layout.groups.filter { !layout.hosts(in: $0.id).filter(matches).isEmpty } : layout.groups
+    }
+
+    private func isExpanded(_ group: HostGroup) -> Bool {
+        isFiltering || !store.isCollapsed(group.id)
     }
 
     private func matches(_ host: Host) -> Bool {
@@ -43,54 +62,24 @@ struct HostListView: View {
             }
 
             List {
-                ForEach(visibleHosts) { host in
-                    let hostSessions = sessions.sessions(for: host.id)
-                    let showsChildren = hostSessions.count > 1 || hostSessions.contains {
-                        $0.customName != nil || renamingSessionID == $0.id
-                    }
-                    VStack(spacing: 2) {
-                        HStack(spacing: 0) {
-                            Button {
-                                if let session = sessions.session(for: host.id) { sessions.selectSession(session.id) }
-                                else { sessions.open(host) }
-                            } label: {
-                                row(for: host)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, DesktopMetrics.rowInset)
-                                    .frame(height: DesktopMetrics.hostRowHeight)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            if hoveredHostID == host.id || copiedHostID == host.id {
-                                copyButton(host)
-                                    .padding(.trailing, !showsChildren && !hostSessions.isEmpty ? 0 : DesktopMetrics.rowInset)
-                                    .transition(.opacity)
-                            }
-                            if !showsChildren, let session = hostSessions.first {
-                                closeButton(session)
-                                    .padding(.trailing, DesktopMetrics.rowInset)
-                                    .transition(.opacity)
-                            }
+                let layout = store.layout
+                ForEach(layout.ungrouped.filter(matches)) { host in
+                    hostEntry(host)
+                }
+                ForEach(visibleGroups) { group in
+                    groupHeader(group, count: layout.hosts(in: group.id).count)
+                    if isExpanded(group) {
+                        let groupHosts = layout.hosts(in: group.id).filter(matches)
+                        if groupHosts.isEmpty {
+                            emptyGroupRow(group)
                         }
-                        .modifier(SidebarRowHighlight(selected: !showsChildren && sessions.selectedHostID == host.id))
-                        .onHover { inside in
-                            if inside { hoveredHostID = host.id }
-                            else if hoveredHostID == host.id { hoveredHostID = nil }
-                        }
-                        .animation(reduceMotion ? nil : .easeInOut(duration: 0.12), value: hoveredHostID == host.id)
-                        .debugRegion("host-row", sessionID: host.id)
-                        .contextMenu { contextMenu(for: host) }
-
-                        if showsChildren {
-                            ForEach(hostSessions) { session in
-                                sessionRow(session)
-                                    .padding(.leading, DesktopMetrics.childIndent)
-                                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
-                            }
+                        ForEach(groupHosts) { host in
+                            hostEntry(host)
                         }
                     }
-                    .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
-                    .listRowBackground(Color.clear)
+                }
+                if !store.groups.isEmpty && !isFiltering {
+                    ungroupDropZone
                 }
             }
             .listStyle(.sidebar)
@@ -101,8 +90,10 @@ struct HostListView: View {
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: sessions.openSessions.map(\.savedSessionID))
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: sessions.selectedSessionID)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: renamingSessionID)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: store.collapsedGroupIDs)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: store.layout)
             .overlay {
-                if visibleHosts.isEmpty {
+                if visibleHosts.isEmpty && (isFiltering || store.groups.isEmpty) {
                     VStack(spacing: 8) {
                         Text(!appState.isVaultUnlocked ? "Vault Locked" : (filter.isEmpty ? "No Hosts" : "No Results"))
                             .font(.system(size: 13, weight: .medium))
@@ -132,8 +123,287 @@ struct HostListView: View {
         .onReceive(NotificationCenter.default.publisher(for: .maineFocusSearch)) { _ in
             searchFocusRequest += 1
         }
+        .onReceive(NotificationCenter.default.publisher(for: .maineNewGroup)) { _ in
+            createGroup()
+        }
         .onChange(of: renameFocused) { _, focused in
             if !focused { commitRename() }
+        }
+        .onChange(of: groupRenameFocused) { _, focused in
+            if !focused { commitGroupRename() }
+        }
+    }
+
+    // MARK: - Hosts and groups
+
+    /// One host: its row and, when it has several or renamed sessions, the
+    /// session rows beneath it. The row is draggable and accepts drops
+    /// (another host lands just above it, in the same section).
+    private func hostEntry(_ host: Host) -> some View {
+        let hostSessions = sessions.sessions(for: host.id)
+        let showsChildren = hostSessions.count > 1 || hostSessions.contains {
+            $0.customName != nil || renamingSessionID == $0.id
+        }
+        return VStack(spacing: 2) {
+            HStack(spacing: 0) {
+                row(for: host)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, DesktopMetrics.rowInset)
+                    .frame(height: DesktopMetrics.hostRowHeight)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if let session = sessions.session(for: host.id) { sessions.selectSession(session.id) }
+                        else { sessions.open(host) }
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction {
+                        if let session = sessions.session(for: host.id) { sessions.selectSession(session.id) }
+                        else { sessions.open(host) }
+                    }
+                if hoveredHostID == host.id || copiedHostID == host.id {
+                    copyButton(host)
+                        .padding(.trailing, !showsChildren && !hostSessions.isEmpty ? 0 : DesktopMetrics.rowInset)
+                        .transition(.opacity)
+                }
+                if !showsChildren, let session = hostSessions.first {
+                    closeButton(session)
+                        .padding(.trailing, DesktopMetrics.rowInset)
+                        .transition(.opacity)
+                }
+            }
+            .modifier(SidebarRowHighlight(selected: !showsChildren && sessions.selectedHostID == host.id))
+            .overlay(alignment: .top) { insertionLine(visible: dropTarget == .host(host.id)) }
+            .onHover { inside in
+                if inside { hoveredHostID = host.id }
+                else if hoveredHostID == host.id { hoveredHostID = nil }
+            }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.12), value: hoveredHostID == host.id)
+            .debugRegion("host-row", sessionID: host.id)
+            .contextMenu { contextMenu(for: host) }
+            .draggable(SidebarDragItem.host(host.id).payload) {
+                Label(host.displayName, systemImage: "terminal")
+                    .font(.system(size: 13, weight: .medium))
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+            }
+            .dropDestination(for: String.self) { items, _ in
+                drop(items, toGroup: host.groupID, before: host.id)
+            } isTargeted: { setDropTarget(.host(host.id), $0) }
+
+            if showsChildren {
+                ForEach(hostSessions) { session in
+                    sessionRow(session)
+                        .padding(.leading, DesktopMetrics.childIndent)
+                        .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                }
+            }
+        }
+        .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
+        .listRowBackground(Color.clear)
+    }
+
+    /// A collapsible section header. Click toggles; hosts dropped on it join
+    /// the group at its end; a group dropped on it moves above it.
+    private func groupHeader(_ group: HostGroup, count: Int) -> some View {
+        let expanded = isExpanded(group)
+        return HStack(spacing: 6) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .rotationEffect(.degrees(expanded ? 90 : 0))
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+            if renamingGroupID == group.id {
+                TextField("Group name", text: $groupRenameText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .focused($groupRenameFocused)
+                    .onAppear { groupRenameFocused = true }
+                    .onSubmit { commitGroupRename() }
+                    .onExitCommand { renamingGroupID = nil; groupRenameFocused = false }
+                    .accessibilityIdentifier("group-name-editor")
+            } else {
+                Text(group.name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if !expanded && count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, DesktopMetrics.rowInset)
+        .frame(height: DesktopMetrics.groupRowHeight)
+        .contentShape(Rectangle())
+        .onTapGesture { toggle(group) }
+        .modifier(SidebarRowHighlight(selected: false))
+        .overlay {
+            if dropTarget == .group(group.id) {
+                RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor, lineWidth: 2)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("\(group.name), group, \(expanded ? "expanded" : "collapsed")")
+        .accessibilityAction { toggle(group) }
+        .accessibilityIdentifier("group-\(group.id.uuidString)")
+        .debugRegion("group-header", sessionID: group.id)
+        .contextMenu {
+            Button(expanded ? "Collapse Group" : "Expand Group") { toggle(group) }
+            Button("Rename Group…") { beginGroupRename(group) }
+            Divider()
+            Button("New Group") { createGroup() }
+            Divider()
+            Button("Delete Group", role: .destructive) { deleteGroup(group) }
+        }
+        .draggable(SidebarDragItem.group(group.id).payload) {
+            Label(group.name, systemImage: "folder")
+                .font(.system(size: 12, weight: .semibold))
+                .padding(.horizontal, 8).padding(.vertical, 4)
+        }
+        .dropDestination(for: String.self) { items, _ in
+            drop(items, toGroup: group.id, before: nil, groupBefore: group.id)
+        } isTargeted: { setDropTarget(.group(group.id), $0) }
+        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 1, trailing: 0))
+        .listRowBackground(Color.clear)
+    }
+
+    private func emptyGroupRow(_ group: HostGroup) -> some View {
+        Text("Drag hosts here")
+            .font(.system(size: 11))
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, DesktopMetrics.rowInset + 22)
+            .frame(height: DesktopMetrics.sessionRowHeight)
+            .contentShape(Rectangle())
+            .overlay {
+                if dropTarget == .groupEnd(group.id) {
+                    RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor, lineWidth: 2)
+                }
+            }
+            .dropDestination(for: String.self) { items, _ in
+                drop(items, toGroup: group.id, before: nil)
+            } isTargeted: { setDropTarget(.groupEnd(group.id), $0) }
+            .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
+            .listRowBackground(Color.clear)
+    }
+
+    /// The end of the list: a host dropped here leaves its group and goes to
+    /// the end of the ungrouped hosts; a group dropped here moves last.
+    private var ungroupDropZone: some View {
+        Text(dropTarget == .ungroupedEnd ? "Remove from group" : " ")
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: DesktopMetrics.sessionRowHeight)
+            .contentShape(Rectangle())
+            .overlay {
+                if dropTarget == .ungroupedEnd {
+                    RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor, lineWidth: 2)
+                }
+            }
+            .dropDestination(for: String.self) { items, _ in
+                drop(items, toGroup: nil, before: nil, groupToEnd: true)
+            } isTargeted: { setDropTarget(.ungroupedEnd, $0) }
+            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 1, trailing: 0))
+            .listRowBackground(Color.clear)
+            .accessibilityHidden(true)
+    }
+
+    private func insertionLine(visible: Bool) -> some View {
+        Capsule()
+            .fill(Color.accentColor)
+            .frame(height: 2)
+            .padding(.horizontal, 4)
+            .offset(y: -2)
+            .opacity(visible ? 1 : 0)
+    }
+
+    private func setDropTarget(_ target: SidebarDropTarget, _ targeted: Bool) {
+        if targeted { dropTarget = target }
+        else if dropTarget == target { dropTarget = nil }
+    }
+
+    /// Applies a sidebar drop. Hosts go to `group` (before `target` when
+    /// given); groups move before `groupBefore`, or last with `groupToEnd`.
+    private func drop(_ items: [String], toGroup group: HostGroup.ID?, before target: Host.ID?,
+                      groupBefore: HostGroup.ID? = nil, groupToEnd: Bool = false) -> Bool {
+        dropTarget = nil
+        let parsed = items.compactMap(SidebarDragItem.init(payload:))
+        guard !parsed.isEmpty else { return false }
+        var target = target
+        var groupID = group
+        // Dropping a group on a host in another group places it above that group.
+        let groupAnchor = groupBefore ?? (target.flatMap { store.host(id: $0)?.groupID })
+        let result = store.updateLayout { layout in
+            for item in parsed {
+                switch item {
+                case .host(let id):
+                    layout.moveHost(id, toGroup: groupID, before: target)
+                    target = nil
+                    groupID = layout.hosts.first { $0.id == id }?.groupID
+                case .group(let id):
+                    if groupToEnd { layout.moveGroup(id, before: nil) }
+                    else if let groupAnchor { layout.moveGroup(id, before: groupAnchor) }
+                }
+            }
+        }
+        if case .failure(let error) = result { appState.showAlert(title: "Hosts not rearranged", error.localizedDescription) }
+        DebugLog.shared.record("ui.sidebar-drop", fields: ["items": String(parsed.count)])
+        return true
+    }
+
+    private func toggle(_ group: HostGroup) {
+        guard !isFiltering, renamingGroupID != group.id else { return }
+        store.setCollapsed(group.id, !store.isCollapsed(group.id))
+    }
+
+    private func createGroup(moving host: Host? = nil) {
+        guard appState.isVaultUnlocked else { appState.isVaultSheetPresented = true; return }
+        var created: HostGroup?
+        let result = store.updateLayout { layout in
+            let group = layout.addGroup()
+            if let host { layout.moveHost(host.id, toGroup: group.id, before: nil) }
+            created = group
+        }
+        switch result {
+        case .success:
+            if let created {
+                store.setCollapsed(created.id, false)
+                beginGroupRename(created)
+            }
+        case .failure(let error):
+            appState.showAlert(title: "Group not created", error.localizedDescription)
+        }
+    }
+
+    private func beginGroupRename(_ group: HostGroup) {
+        renamingGroupID = group.id
+        groupRenameText = group.name
+    }
+
+    private func commitGroupRename() {
+        guard let id = renamingGroupID else { return }
+        let name = groupRenameText
+        renamingGroupID = nil
+        groupRenameFocused = false
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if case .failure(let error) = store.updateLayout({ try $0.renameGroup(id, to: name) }) {
+            appState.showAlert(title: "Group not renamed", error.localizedDescription)
+        }
+    }
+
+    private func deleteGroup(_ group: HostGroup) {
+        if case .failure(let error) = store.updateLayout({ $0.deleteGroup(group.id) }) {
+            appState.showAlert(title: "Group not deleted", error.localizedDescription)
+        }
+    }
+
+    private func move(_ host: Host, to group: HostGroup.ID?) {
+        if case .failure(let error) = store.updateLayout({ $0.moveHost(host.id, toGroup: group, before: nil) }) {
+            appState.showAlert(title: "Host not moved", error.localizedDescription)
         }
     }
 
@@ -335,6 +605,17 @@ struct HostListView: View {
             Button("Edit Host…") { appState.edit(host) }
             Button("Duplicate Host") { duplicate(host) }
             Button("Copy Credentials") { CredentialCommands.copy(host: host, appState: appState) }
+            Menu("Move to Group") {
+                Button("None") { move(host, to: nil) }
+                    .disabled(host.groupID == nil)
+                if !store.groups.isEmpty { Divider() }
+                ForEach(store.groups) { group in
+                    Button(group.name) { move(host, to: group.id) }
+                        .disabled(host.groupID == group.id)
+                }
+                Divider()
+                Button("New Group…") { createGroup(moving: host) }
+            }
             Divider()
             Button("Delete Host", role: .destructive) { sessions.delete(host) }
         }
@@ -414,6 +695,17 @@ struct HostListView: View {
             }
             .help("New host")
 
+            Button {
+                createGroup()
+            } label: {
+                Image(systemName: "folder.badge.plus")
+                    .font(.system(size: 12))
+                    .frame(width: 24, height: 24)
+            }
+            .disabled(!appState.isVaultUnlocked)
+            .help("New group")
+            .accessibilityLabel("New group")
+
             Spacer(minLength: 0)
 
             if let profile = sync.activeProfile {
@@ -431,4 +723,39 @@ struct HostListView: View {
         .debugRegion("sidebar-footer")
         .buttonStyle(MotionButtonStyle())
     }
+}
+
+/// What a sidebar drag carries: a plain string, so no custom pasteboard type
+/// has to be declared. Only IDs travel, never names.
+enum SidebarDragItem: Equatable {
+    case host(Host.ID)
+    case group(HostGroup.ID)
+
+    private static let hostPrefix = "maine-host:"
+    private static let groupPrefix = "maine-group:"
+
+    var payload: String {
+        switch self {
+        case .host(let id): Self.hostPrefix + id.uuidString
+        case .group(let id): Self.groupPrefix + id.uuidString
+        }
+    }
+
+    init?(payload: String) {
+        if payload.hasPrefix(Self.hostPrefix), let id = UUID(uuidString: String(payload.dropFirst(Self.hostPrefix.count))) {
+            self = .host(id)
+        } else if payload.hasPrefix(Self.groupPrefix),
+                  let id = UUID(uuidString: String(payload.dropFirst(Self.groupPrefix.count))) {
+            self = .group(id)
+        } else {
+            return nil
+        }
+    }
+}
+
+enum SidebarDropTarget: Hashable {
+    case host(Host.ID)
+    case group(HostGroup.ID)
+    case groupEnd(HostGroup.ID)
+    case ungroupedEnd
 }
