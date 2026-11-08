@@ -390,6 +390,9 @@ struct WorkspaceLifecycleTests {
                 assertVisibleLayout(window: window, view: view, session: first)
                 let header = try #require(DebugDiagnostics.frameForRegion("session-header", sessionID: first.id))
                 #expect(abs(header.height - DesktopMetrics.headerHeight) < 1)
+                // Hidden title bar: the header starts at the window's top edge,
+                // not below an empty title-bar inset.
+                #expect(header.minY < 1)
                 let sidebar = try #require(DebugDiagnostics.frameForRegion("sidebar"))
                 #expect(sidebar.width >= 219 && sidebar.width <= 341)
                 let footer = try #require(DebugDiagnostics.frameForRegion("sidebar-footer"))
@@ -580,8 +583,6 @@ struct WorkspaceLifecycleTests {
         // its header may start above `root` (at the window's top edge).
         let rootToWindowTop = CGRect(x: root.minX, y: 0, width: root.width, height: root.maxY)
         #expect(rootToWindowTop.insetBy(dx: -1, dy: -1).contains(header), sourceLocation: sourceLocation)
-        #expect(header.minY < 1, "the header starts at the window's top edge, not below an empty inset",
-                sourceLocation: sourceLocation)
         #expect(root.insetBy(dx: -1, dy: -1).contains(terminal), sourceLocation: sourceLocation)
         #expect(header.height > 20, sourceLocation: sourceLocation)
         #expect(terminal.height > 100, sourceLocation: sourceLocation)
