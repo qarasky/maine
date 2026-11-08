@@ -2,8 +2,9 @@ import AppKit
 import Foundation
 import SwiftTerm
 
-/// One live connection: a SwiftTerm view backed by the system `ssh` client
-/// running inside a PTY.
+/// One live connection: a SwiftTerm view (a `CapturingTerminalView`, so any
+/// session can be handed to an agent later without replacing its view) backed
+/// by the system `ssh` client running inside a PTY.
 ///
 /// Each session owns its own terminal view, so reconnecting starts from a clean
 /// screen. Nothing here knows about SwiftUI beyond being `@MainActor`, and
@@ -63,8 +64,9 @@ public final class TerminalSession: ObservableObject, Identifiable {
     public let host: Host
     /// The executable this session runs: the system OpenSSH client in the app.
     public let executablePath: String
-    /// The view the session renders into: SwiftTerm's `LocalProcessTerminalView`
-    /// for ordinary sessions, `CapturingTerminalView` for agent sessions.
+    /// The view the session renders into. Every session uses a
+    /// `CapturingTerminalView`, which passes each PTY byte to the session
+    /// before rendering it; the view is never replaced.
     public let terminalView: TerminalView
     /// Arguments that replace the `ssh` command line (tests run `/bin/sh`).
     private let processArguments: [String]?
@@ -73,10 +75,13 @@ public final class TerminalSession: ObservableObject, Identifiable {
     /// Set when agent control ended but the session stays open, still
     /// ephemeral, until the user keeps or closes it.
     @Published public internal(set) var formerAgentName: String?
+    /// The user opened this session and handed it to an agent: it stays an
+    /// ordinary saved session while the agent drives it.
+    public internal(set) var isHandedOff = false
     /// Last time the user typed into this session (agent sessions only).
     public private(set) var lastUserInputAt: Date?
     /// Agent sessions are never checkpointed until the user keeps them.
-    public var isEphemeral: Bool { agent != nil || formerAgentName != nil }
+    public var isEphemeral: Bool { (agent != nil && !isHandedOff) || formerAgentName != nil }
     @Published public internal(set) var customName: String?
     @Published public internal(set) var savedSessionID: UUID?
 
@@ -86,11 +91,10 @@ public final class TerminalSession: ObservableObject, Identifiable {
         }
     }
     @Published public private(set) var needsVaultUnlock = false
-    @Published public private(set) var needsPassword = false
     private var disconnectRequested = false
 
     public init(host: Host, executablePath: String = SSHTarget.executablePath,
-                processArguments: [String]? = nil, capturesOutput: Bool = false) {
+                processArguments: [String]? = nil) {
         self.host = host
         self.executablePath = executablePath
         self.processArguments = processArguments
@@ -98,15 +102,9 @@ public final class TerminalSession: ObservableObject, Identifiable {
         // produces output, and the PTY is resized as soon as the frame is real.
         let frame = NSRect(x: 0, y: 0, width: 800, height: 480)
         let options = TerminalOptions(cols: 80, rows: 24)
-        if capturesOutput {
-            let view = CapturingTerminalView(frame: frame, options: options)
-            terminalView = view
-            view.host = self
-        } else {
-            let view = LocalProcessTerminalView(frame: frame, options: options)
-            terminalView = view
-            view.processDelegate = self
-        }
+        let view = CapturingTerminalView(frame: frame, options: options)
+        terminalView = view
+        view.host = self
         // Stable terminal contrast in both system appearances. ANSI colors and
         // the remote application's escape sequences remain terminal-owned.
         terminalView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -156,7 +154,6 @@ public final class TerminalSession: ObservableObject, Identifiable {
 
         let target = SSHTarget.make(for: host)
         needsVaultUnlock = false
-        needsPassword = false
         var environment = TerminalEnvironment.variables
         if executablePath == SSHTarget.executablePath {
             do {
@@ -165,11 +162,9 @@ public final class TerminalSession: ObservableObject, Identifiable {
                         for: host.id, base: environment,
                         executable: Bundle.main.executableURL?.path ?? CommandLine.arguments[0]
                     )
-                } else {
-                    needsPassword = true
-                    state = .failed("This host needs a saved password. Edit the host to add one.")
-                    return
                 }
+                // No saved password: plain ssh, so keys, ssh-agent and
+                // ~/.ssh/config work and any prompt appears in the terminal.
             } catch {
                 if case PasswordStore.VaultError.locked = error { needsVaultUnlock = true }
                 state = .failed(error.localizedDescription)
@@ -178,11 +173,7 @@ public final class TerminalSession: ObservableObject, Identifiable {
         }
         state = .connecting
         let arguments = processArguments ?? target.arguments
-        if let capturing = terminalView as? CapturingTerminalView {
-            capturing.startProcess(executable: executablePath, args: arguments, environment: environment)
-        } else {
-            localTerminalView?.startProcess(executable: executablePath, args: arguments, environment: environment)
-        }
+        capturingView.startProcess(executable: executablePath, args: arguments, environment: environment)
         DebugLog.shared.record("session.process-start-returned", fields: debugFields)
     }
 
@@ -198,8 +189,7 @@ public final class TerminalSession: ObservableObject, Identifiable {
         DebugDiagnostics.capture("disconnect.\(correlation).before")
         DebugLog.shared.record("disconnect.terminate-begin", fields: debugFields.merging(["correlation": correlation]) { _, new in new }, flush: true)
         let start = ProcessInfo.processInfo.systemUptime
-        if let capturing = terminalView as? CapturingTerminalView { capturing.terminate() }
-        else { localTerminalView?.terminate() }
+        capturingView.terminate()
         DebugLog.shared.record("disconnect.terminate-returned", fields: debugFields.merging([
             "correlation": correlation,
             "elapsedMS": String((ProcessInfo.processInfo.systemUptime - start) * 1000)
@@ -212,20 +202,19 @@ public final class TerminalSession: ObservableObject, Identifiable {
         terminalView.window?.makeFirstResponder(terminalView)
     }
 
-    var localTerminalView: LocalProcessTerminalView? { terminalView as? LocalProcessTerminalView }
+    private var capturingView: CapturingTerminalView {
+        // `terminalView` is assigned once in `init`, always to this type.
+        unsafeDowncast(terminalView, to: CapturingTerminalView.self)
+    }
 
     /// The child's pid and whether it runs, for diagnostics.
-    var processPID: pid_t {
-        (terminalView as? CapturingTerminalView)?.shellPid ?? localTerminalView?.process.shellPid ?? 0
-    }
+    var processPID: pid_t { capturingView.shellPid }
 
-    var processRunning: Bool {
-        (terminalView as? CapturingTerminalView)?.isRunning ?? localTerminalView?.process.running ?? false
-    }
+    var processRunning: Bool { capturingView.isRunning }
 
-    /// Agent input. Only agent sessions can be written to this way.
+    /// Input that is not the user typing: an agent's keys, or a test's.
     func sendInput(_ bytes: [UInt8]) {
-        (terminalView as? CapturingTerminalView)?.sendToProcess(bytes)
+        capturingView.sendToProcess(bytes)
     }
 
     /// The visible screen as text, and the cursor.
@@ -233,6 +222,13 @@ public final class TerminalSession: ObservableObject, Identifiable {
         let snapshot = terminalView.terminalStateSnapshot()
         let rows = terminalView.visibleRowsText(0..<snapshot.dimensions.rows)
         return (rows, snapshot.cursor.row, snapshot.cursor.col)
+    }
+
+    /// The last non-empty screen line looks like a shell prompt. A full-screen
+    /// program or a running command almost never ends that way.
+    var isAtShellPrompt: Bool {
+        let last = screenText().rows.last { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
+        return PromptHeuristics.looksLikeShellPrompt(last)
     }
 
     private func markConnectedAfterLayout() {
@@ -261,11 +257,16 @@ extension TerminalSession: CapturingTerminalViewHost {
         agent?.ingest(bytes)
     }
 
+    var isUserDriven: Bool { agent == nil }
+
     func capturedUserInput() {
         lastUserInputAt = Date()
     }
 
     func capturedSizeChange() {
+        // The terminal has been sized, so `ssh` now has a real terminal to
+        // write to: the "connection is up" signal, because ssh says nothing
+        // when it connects quietly.
         markConnectedAfterLayout()
     }
 
@@ -274,36 +275,6 @@ extension TerminalSession: CapturingTerminalViewHost {
     }
 
     func capturedLaunchFailure(_ error: LocalProcessError) {
-        DebugLog.shared.record("process.failed-callback", fields: debugFields)
-        state = .failed(error.message)
-    }
-}
-
-extension TerminalSession: LocalProcessTerminalViewDelegate {
-    /// The terminal has been sized for the first time, which means `ssh` now has
-    /// a real terminal to write to. Used as the "connection is up" signal,
-    /// because ssh says nothing when it connects quietly.
-    public func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
-        DebugLog.shared.record("terminal.size-changed", fields: [
-            "session": id.uuidString, "cols": String(newCols), "rows": String(newRows), "state": state.debugName
-        ])
-        markConnectedAfterLayout()
-    }
-
-    public func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        // Maine labels sessions with the host name, so the title ssh reports
-        // (which is usually the host it connected to) is left in the terminal.
-    }
-
-    public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
-        // Available for future use; nothing needs it yet.
-    }
-
-    public func processTerminated(source: TerminalView, exitCode: Int32?) {
-        terminated(exitCode: exitCode)
-    }
-
-    public func processFailedToStart(source: TerminalView, error: LocalProcessError) {
         DebugLog.shared.record("process.failed-callback", fields: debugFields)
         state = .failed(error.message)
     }

@@ -169,14 +169,16 @@ public struct PasswordStore: Sendable {
 
     /// Commit metadata and its credential together in one atomic replacement.
     public func saveHost(_ host: Host, password: String) throws {
-        guard host.isValid, !password.isEmpty else { throw VaultError.invalidFile }
+        guard host.isValid else { throw VaultError.invalidFile }
         try updateContents { contents in
             if let index = contents.hosts.firstIndex(where: { $0.id == host.id }) {
                 contents.hosts[index] = host
             } else {
                 contents.hosts.append(host)
             }
-            contents.passwords[host.id.uuidString] = password
+            // An empty password means key login: store nothing.
+            if password.isEmpty { contents.passwords.removeValue(forKey: host.id.uuidString) }
+            else { contents.passwords[host.id.uuidString] = password }
         }
     }
 
@@ -216,6 +218,7 @@ public struct PasswordStore: Sendable {
         var sessions: [SavedSession] = []
         var collapsedGroups: [UUID] = []
         var agentAccess = AgentAccess()
+        var agentAudit: [AgentAuditEntry] = []
 
         init(sessions: [SavedSession] = []) { self.sessions = sessions }
 
@@ -225,6 +228,7 @@ public struct PasswordStore: Sendable {
             sessions = try container.decodeIfPresent([SavedSession].self, forKey: .sessions) ?? []
             collapsedGroups = try container.decodeIfPresent([UUID].self, forKey: .collapsedGroups) ?? []
             agentAccess = try container.decodeIfPresent(AgentAccess.self, forKey: .agentAccess) ?? AgentAccess()
+            agentAudit = try container.decodeIfPresent([AgentAuditEntry].self, forKey: .agentAudit) ?? []
         }
     }
 
@@ -249,6 +253,26 @@ public struct PasswordStore: Sendable {
 
     public func setAgentAccess(_ access: AgentAccess) throws {
         try updateLocalState { $0.agentAccess = access }
+    }
+
+    /// What agents did on this device, oldest first. Device-local: never synced.
+    public func agentAudit() throws -> [AgentAuditEntry] {
+        guard let vault = try read() else { return [] }
+        return try localState(vault, key: unlockedKey(vault)).agentAudit
+    }
+
+    public func appendAgentAudit(_ entries: [AgentAuditEntry]) throws {
+        guard !entries.isEmpty else { return }
+        try updateLocalState {
+            $0.agentAudit.append(contentsOf: entries)
+            if $0.agentAudit.count > AgentAuditEntry.limit {
+                $0.agentAudit.removeFirst($0.agentAudit.count - AgentAuditEntry.limit)
+            }
+        }
+    }
+
+    public func clearAgentAudit() throws {
+        try updateLocalState { $0.agentAudit = [] }
     }
 
     public func setCollapsedGroupIDs(_ ids: Set<UUID>) throws {

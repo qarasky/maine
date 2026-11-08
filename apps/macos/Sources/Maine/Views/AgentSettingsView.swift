@@ -8,6 +8,7 @@ struct AgentSettingsView: View {
     @State private var addingClient = false
     @State private var pairing: AgentCoordinator.Pairing?
     @State private var revokeTarget: AgentClient?
+    @State private var clearingAudit = false
 
     var body: some View {
         ScrollView {
@@ -34,6 +35,8 @@ struct AgentSettingsView: View {
                 clientsSection
                 Divider()
                 accessSection
+                Divider()
+                auditSection
             }
             .padding(20)
         }
@@ -90,6 +93,37 @@ struct AgentSettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private var auditSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Activity").font(.headline)
+                Spacer()
+                Button("Clear…", role: .destructive) { clearingAudit = true }
+                    .disabled(coordinator.auditEntries.isEmpty)
+            }
+            Text("What agents did on this Mac: commands they ran, keys they sent, and when a saved password was typed. Stored encrypted on this device only. It never syncs, and it never records passwords, output or typed text.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if coordinator.auditEntries.isEmpty {
+                Text("Nothing yet.").font(.callout).foregroundStyle(.secondary)
+            } else {
+                ForEach(coordinator.auditEntries.suffix(100).reversed()) { entry in
+                    AgentAuditRow(entry: entry)
+                }
+                if coordinator.auditEntries.count > 100 {
+                    Text("Showing the latest 100 of \(coordinator.auditEntries.count).")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .confirmationDialog("Clear agent activity?", isPresented: $clearingAudit) {
+            Button("Clear", role: .destructive) { coordinator.clearAudit() }
+        } message: {
+            Text("This removes the activity record on this Mac. It cannot be undone.")
+        }
+    }
+
     private struct PairingBox: Identifiable {
         let pairing: AgentCoordinator.Pairing
         var id: UUID { pairing.client.id }
@@ -140,6 +174,37 @@ private struct AgentAccessList: View {
             }
         }
         .disabled(coveredByGroup)
+    }
+}
+
+private struct AgentAuditRow: View {
+    let entry: AgentAuditEntry
+
+    private var summary: String {
+        switch entry.kind {
+        case .open: "opened a session"
+        case .run: entry.detail ?? "ran a command"
+        case .keys: "sent keys: \(entry.detail ?? "")"
+        case .password: "typed the saved password"
+        case .close: "closed the session"
+        case .handoff: "was handed a session"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(summary)
+                .font(entry.kind == .run ? .system(size: 12, design: .monospaced) : .system(size: 12))
+                .lineLimit(2)
+                .textSelection(.enabled)
+            HStack(spacing: 6) {
+                Text("\(entry.client) · \(entry.hostName)")
+                Text(entry.at, format: .dateTime.month().day().hour().minute())
+                if let code = entry.exitCode { Text(code == 0 ? "exit 0" : "exit \(code)").foregroundStyle(code == 0 ? Color.secondary : Color.orange) }
+            }
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

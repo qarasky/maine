@@ -12,14 +12,15 @@ apps/android/
 ├── gradle/libs.versions.toml        version catalog (AGP, Kotlin, Compose BOM, sshj)
 ├── app/                             com.android.application module (app.maine.android)
 │   └── src/main/java/app/maine/android/
-│       ├── model/    Host, HostConfiguration, SavedSession (schema parity)
+│       ├── model/    Host, HostConfiguration, SavedSession (host schema v1)
 │       ├── ssh/      SshTarget (display args + dial params), SshConfigFile reader
 │       ├── vault/    VaultStore (v2 vault, byte-compatible with macOS)
 │       ├── store/    HostStore (owns the host list)
-│       ├── session/  SshConnection (transport seam), SshTerminal (emulator bridge),
-│       │             TerminalSession, SessionManager
+│       ├── session/  SshConnection (transport seam), SshjConnection (live
+│       │             transport), SshTerminal (emulator bridge), TerminalSession,
+│       │             SessionManager, KnownHosts + PinnedHostKeyVerifier
 │       └── ui/       Compose screens: unlock, host list, editor, session;
-│                     TerminalSurface + MaineTerminalPalette
+│                     TerminalSurface, ExtraKeysRow, MaineTerminalPalette
 ├── terminal/                        vendored Termux terminal-emulator + terminal-view
 │                                    (Apache-2.0; see THIRD_PARTY_LICENSES.md)
 ├── app/src/test/                    JVM unit tests (no emulator needed)
@@ -30,7 +31,7 @@ apps/android/
 
 ```sh
 cd apps/android
-./gradlew :app:testDebugUnitTest   # JVM unit tests (~50 tests, no emulator)
+./gradlew :app:testDebugUnitTest   # JVM unit tests (49 tests, no emulator)
 ./gradlew :app:assembleDebug       # APK; install on the emulator when ready
 ./gradlew :terminal:assembleDebug  # vendored terminal module alone
 ```
@@ -50,7 +51,7 @@ First run downloads Gradle 8.13 and dependencies (~500 MB).
   writes to the socket from whichever thread calls it — so a window-change or a
   disconnect issued from the UI thread aborts mid-packet and corrupts the SSH
   stream, which the server answers with a connection reset. Connecting and
-  reading run on one worker thread; `resize` and `close` are handed to a
+  reading run on one worker thread; `send`, `resize` and `close` are handed to a
   single-threaded executor, which also coalesces the burst of resizes a keyboard
   animation produces. Resizes become SSH `window-change`, so `stty size` in the
   session matches the view.
@@ -71,8 +72,12 @@ First run downloads Gradle 8.13 and dependencies (~500 MB).
   Fingerprints are computed over the SSH wire encoding, so they read exactly
   like `ssh-keygen -lf` (`SHA256:...`) and can be compared against the server;
   `HostKeyFingerprintTest` pins that against a vector produced by `ssh-keygen`.
-* **Password auth only.** There is no `~/.ssh` on Android to read keys from;
-  importing keys from the vault is a later pass.
+* **Password auth only, and a password is required.** There is no `~/.ssh` on
+  Android to read keys from; importing keys from the vault is a later pass. The
+  host editor requires a username and a password, and the transport refuses to
+  dial without both. A host read from a macOS vault with no saved password
+  loads but cannot connect until one is added, unlike macOS, where plain `ssh`
+  can use keys and `ssh-agent`.
 * **Restored scrollback is a replay, not a snapshot.** A restored session is
   seeded by replaying its saved output stream, which keeps colors and needs no
   second serializer — but it also re-enters whatever terminal modes that output
@@ -88,8 +93,13 @@ First run downloads Gradle 8.13 and dependencies (~500 MB).
   byte-for-byte (PBKDF2-SHA256 600k, AES-256-GCM, identical AAD), so a
   `passwords.maine` file unlocks on either client. It lives in app-private
   internal storage (`filesDir/passwords.maine`). The derived key is held in
-  memory only — every launch starts locked, no "remember me". Version-1
-  vaults are rejected (unlock once on macOS to migrate).
+  memory only: every launch starts locked, no "remember me". Version-1 vaults
+  are rejected (unlock once on macOS to migrate). There is no sync client yet,
+  so moving a vault between devices is manual. The payload carries a schema
+  version 1 host list, so Android ignores the `groups` array a macOS client
+  writes and drops it when it rewrites the vault. Saved sessions (names and
+  scrollback) are written into the same payload; macOS moves them to its own
+  `sessions-<vault id>.maine` on unlock and rewrites the vault without them.
 * **UUID casing.** macOS writes uppercase `UUID().uuidString` and looks
   passwords up with that exact casing. Android normalizes IDs to uppercase
   on read/write; comparisons are case-insensitive.
@@ -104,9 +114,9 @@ First run downloads Gradle 8.13 and dependencies (~500 MB).
   `vim` with the alternate screen restoring cleanly on exit.
 * **The terminal is the input surface.** Tapping the terminal focuses it and
   raises the keyboard; there is no separate "send input" field. `TerminalView`
-  handles the IME, hardware keys, pinch-to-zoom text and text selection, and its
-  `onCopyTextToClipboard`/`onPasteTextFromClipboard` callbacks bridge OSC-52 and
-  paste to the system clipboard.
+  handles the IME, hardware keys, pinch-to-zoom text and text selection, and
+  `SshTerminal`'s `onCopyTextToClipboard`/`onPasteTextFromClipboard` callbacks
+  bridge OSC-52 and paste to the system clipboard.
 * **The emulator lives in the session, not the view.** So navigating away and
   back rebuilds only the view and re-attaches to the same terminal state. It is
   created lazily on the main thread (the vendored session binds a `Handler`),
@@ -125,9 +135,11 @@ First run downloads Gradle 8.13 and dependencies (~500 MB).
   the rest of a typed command. The rest are sent as real VT sequences through
   `KeyHandler`, so arrows honour the application-cursor mode that `vim` and
   `less` switch on rather than always sending the base sequence.
-* **`~/.ssh/config` reader** is ported for host import and display
-  resolution, but Android devices normally have no such file — it loads
-  empty and stays read-only, like macOS.
+* **`~/.ssh/config` reader** is ported (Include chains up to 8 deep, cycle
+  protection, wildcard handling), but it is not wired into the app yet:
+  `SshTarget` resolves against an empty config and there is no host-import
+  screen. Android devices normally have no such file anyway, and a missing file
+  parses as an empty config.
 
 ## Interop fixture
 

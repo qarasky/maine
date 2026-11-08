@@ -18,7 +18,7 @@ maine/
 ├── apps/android/        the Android client: Kotlin, Compose, sshj
 ├── apps/sync-server/    the sync server: Rust, axum, embedded SQLite
 ├── packages/schema/     the shared, language-neutral configuration format
-├── docs/                this document, the sync documents
+├── docs/                this document, the agent and sync documents
 └── README.md
 ```
 
@@ -36,18 +36,20 @@ progress that does not exist.
 The vault file is byte-compatible between macOS and Android: same PBKDF2-SHA256
 (600,000 iterations), same AES-256-GCM additional data
 (`maine-vault:{version}:{UPPERCASE-UUID}:{base64-salt}:{iterations}`),
-same nonce|ciphertext|tag layout, uppercase UUIDs, dates as seconds since
-1970.
+same nonce|ciphertext|tag layout, and uppercase UUIDs. Records that carry a
+date (saved sessions) encode it as seconds since the Apple reference date
+(2001-01-01), which is Swift's default `JSONEncoder` encoding, not the Unix
+epoch.
 
 ## What a connection actually is
 
-Maine does not implement SSH, and it does not link a library that does. A session
-is:
+Maine does not implement SSH, and the macOS client does not link a library that
+does. A session is:
 
 ```
 SwiftUI view
    └── TerminalSession                  owns one NSView and one state machine
-        └── SwiftTerm.LocalProcessTerminalView
+        └── CapturingTerminalView       SwiftTerm view plus its own LocalProcess
              └── forkpty(3)             pseudo terminal
                   └── /usr/bin/ssh -p 2222 -l deploy example.com
                        └── ~/.ssh/config, ~/.ssh/keys, ssh-agent, certificates
@@ -81,10 +83,11 @@ The connection header displays the endpoint as selectable text. Its help tooltip
 shows the exact SSH command line without letting a long executable path dominate
 the header.
 
-`SSHTarget.Resolution` additionally works out what OpenSSH will *actually*
-connect to, by looking the host up in `~/.ssh/config`. This is for display only;
-it is best-effort by design, because OpenSSH's real resolution rules (wildcards,
-`Match`, `Host *` blocks) are more than a sidebar needs to model.
+`SSHTarget.Resolution` can work out what OpenSSH will *actually* connect to, by
+looking the host up in `~/.ssh/config`. It is best-effort and not part of
+connecting: the session still runs plain `ssh`, and the header shows the host as
+entered, because OpenSSH's real resolution rules (wildcards, `Match`, `Host *`
+blocks) are more than a sidebar needs to model.
 
 ### The environment
 
@@ -102,15 +105,17 @@ handled separately in a dialog; host keys are never automatically accepted.
 
 ## The macOS app
 
-Five layers, one file each, each testable without the others:
+Each layer is testable without the others:
 
 | Layer | Files | Responsibility |
 | ----- | ----- | -------------- |
-| App | `App/MaineApp.swift`, `App/AppState.swift`, `App/MenuBarController.swift` | Entry point, menu commands, the menu bar item that keeps the app resident, and the window-level UI state the menus and views share. |
+| App | `App/MaineApp.swift`, `App/AppState.swift`, `App/MenuBarController.swift` | Entry modes (app, askpass, `--mcp`), menu commands, the menu bar item that keeps the app resident, and the window-level UI state the menus and views share. |
+| Agents | `Agents/*.swift`, `Views/AgentSettingsView.swift` | The stdio bridge, socket server, tool handler, per-session driver, access rules and activity log. |
 | Sync | `Sync/SyncProfileStore.swift`, `Sync/SyncEngine.swift`, `Sync/SyncTransport.swift`, `Sync/SyncCoordinator.swift` | Profiles and Keychain tokens; the whole-file create/join/pull/push algorithms with conflict copies; HTTP; triggers, polling and workspace switching. |
-| Models | `Models/Host.swift`, `Models/HostConfiguration.swift`, `Models/HostStore.swift` | The host, the versioned file format, and the store that owns the file on disk. |
-| Services | `Services/SSHTarget.swift`, `Services/SSHConfigFile.swift` | Building the `ssh` invocation, and reading (never writing) `~/.ssh/config`. |
-| Sessions | `Sessions/TerminalSession.swift`, `Sessions/SessionManager.swift` | One PTY session per host, and which sessions are open. |
+| Updates | `Update/AppVersion.swift`, `Update/UpdateFeed.swift`, `Update/UpdateInstaller.swift`, `Update/UpdateCoordinator.swift`, `Views/UpdateSettingsView.swift` | Semver and the running version; parsing the latest release into an offer; verified download and bundle swap; check scheduling, the popup, and the Settings tab. |
+| Models | `Models/Host.swift`, `Models/HostConfiguration.swift`, `Models/HostGroup.swift`, `Models/HostLayout.swift`, `Models/HostStore.swift`, `Models/SavedSession.swift` | The host, the versioned file format, groups and ordering, saved-session records, and the store that owns the file on disk. |
+| Services | `Services/SSHTarget.swift`, `Services/SSHConfigFile.swift`, `Services/SSHAskPass.swift`, `Services/PasswordStore.swift`, `Services/LocalVaultKeyStore.swift` | Building the `ssh` invocation, reading (never writing) `~/.ssh/config`, supplying saved passwords, and the encrypted vault. |
+| Sessions | `Sessions/TerminalSession.swift`, `Sessions/CapturingTerminalView.swift`, `Sessions/SessionManager.swift` | One PTY per session (with the terminal view every session owns), and which sessions are open. |
 | Views | `Views/*.swift` | SwiftUI presentation only. |
 
 Data flows one way: a view asks `SessionManager` to open a host, the manager
@@ -120,10 +125,13 @@ line is built, and nothing in `Services` knows SwiftUI exists.
 
 ### Sessions are owned by the session manager, not the views
 
-`TerminalSession` owns its `LocalProcessTerminalView`. The SwiftUI view that
-displays a session is a thin `NSViewRepresentable` that hands back that existing
-view inside a neutral, constrained `TerminalHostView`. Every open session stays
-mounted in a stable `ZStack`, including while no session is selected, so:
+`TerminalSession` owns its terminal view, a `CapturingTerminalView`
+(`Sessions/CapturingTerminalView.swift`): a SwiftTerm `TerminalView` with its
+own `LocalProcess`, so the session can see PTY bytes before they are
+rendered. The SwiftUI view that displays a session is a thin
+`NSViewRepresentable` that hands back that existing view inside a neutral,
+constrained `TerminalHostView`. Every open session stays mounted in a stable
+`ZStack`, including while no session is selected, so:
 
 * switching between sidebar sessions keeps scrollback, and
 * reconnecting creates a whole new session (and view), which is why it starts
@@ -147,8 +155,11 @@ a child targets only its session UUID. Reconnect preserves its display number;
 deleting a saved host closes all of its sessions. Closing a selected child prefers
 another session of that host, then the last remaining session of another host.
 
-`SessionManager` keys sessions by host id, so opening an already-connected host
-brings its terminal back rather than opening a second connection.
+Sessions are held in one array and identified by session UUID; a host's row
+finds its own session with `session(for:)`, so opening an already-connected
+host brings that terminal back rather than opening a second connection.
+Ephemeral sessions an agent opened (not yet kept) are never returned by that
+lookup: they are reached through their own child rows.
 
 ### Status without lying
 
@@ -157,8 +168,9 @@ code), disconnected(exit code) and failed(message). An intentional disconnect
 records the raw process exit code but does not show an error banner, even when
 OpenSSH exits with 255 in response to termination. Unexpected non-zero exits
 still show their error banner. The transition from *connecting* to *connected* is
-driven by the first layout of the terminal view, not by a guess: that is the
-moment the PTY has a real size and `ssh` has a terminal to talk to. A session
+driven by the first layout of the terminal view (or by the first output for a
+session that is never laid out), not by a guess: layout is the moment the PTY
+has a real size and `ssh` has a terminal to talk to. A session
 that ends with a non-zero exit code raises a banner with the exit code, and the
 terminal above it keeps whatever `ssh` printed.
 
@@ -189,10 +201,10 @@ terminal above it keeps whatever `ssh` printed.
 
 Version 2 contains a vault UUID, 32-byte random salt, PBKDF2-SHA256 iteration
 count (600,000), encrypted verification marker, and one encrypted JSON payload
-containing hosts and passwords. IDs and metadata are not visible outside the
-ciphertext. AES-256-GCM authenticates the version, vault ID, salt and iteration
-count as additional data. Host edits/deletes commit metadata and credentials in
-one atomic replacement. Locked host lists are empty and cannot be decrypted. Each
+containing hosts, groups and passwords. IDs and metadata are not visible
+outside the ciphertext. AES-256-GCM authenticates the version, vault ID, salt
+and iteration count as additional data. Host edits/deletes commit metadata and
+credentials in one atomic replacement. Locked host lists are empty and cannot be decrypted. Each
 write uses fresh nonces and atomic replacement, with `0600` file permissions.
 The master password is never stored. The derived encryption key is remembered
 in the local login Keychain, indexed by vault ID, only for the current app
@@ -200,9 +212,11 @@ session. Normal quit removes it; launch resets it even after a crash. Every
 launch presents the master-password sheet, and locked editors disable password
 input. While the process runs, Maine is a menu bar resident: closing the window
 only hides it, so the vault stays unlocked and sessions stay connected until
-quit or an explicit lock. A password is required for adding or saving a host;
-existing hosts without one show an actionable edit prompt when connection is
-attempted.
+quit or an explicit lock. A password is optional. A host without one connects
+with plain `ssh`, so keys in `~/.ssh`, `ssh-agent` and `~/.ssh/config` work and
+any passphrase or password prompt appears in the terminal; Maine stores no
+private keys. A host with a saved password gets it typed through the askpass
+helper.
 Copying only the vault to another Mac requires its
 master password to unlock; neither Keychain export nor plaintext export is needed.
 
@@ -215,26 +229,29 @@ There is no host-import UI; OpenSSH still reads its own configuration normally.
 
 Session snapshots are device-local and never part of the synced vault. They
 live next to it in `sessions-<vault UUID>.maine` (`0600`): a small JSON
-envelope whose payload is the snapshot array sealed with AES-256-GCM under the
-vault's key, with the vault's additional data plus `:sessions`. They lock and
-unlock with the vault, but another device that opens the same
+envelope whose payload is one encrypted state object (sessions, collapsed
+groups, agent access rules and the activity log) sealed with AES-256-GCM under
+the vault's key, with the vault's additional data plus `:sessions`. They lock
+and unlock with the vault, but another device that opens the same
 `passwords.maine` sees none of them, and writing them never posts the
 vault-write notification that schedules a sync push. Keying the file by vault
 UUID keeps each workspace's sessions apart without moving files on a switch. A
 file that does not open with the current key reads as empty. The vault payload
 keeps an optional `sessions` array only for older version-2 vaults: on unlock
 its records move to the local file (local records win) and the vault is
-rewritten without it; no write puts sessions back. Each saved snapshot contains an independent UUID, host
-UUID, display name, plain-text terminal history and save date. Sessions checkpoint
-automatically on creation, every two seconds while unlocked, and before normal
-quit or vault lock. History is capped at 1 MiB from SwiftTerm's retained buffer.
-Unchanged snapshots are not rewritten. Explicit close deletes the encrypted
-record before stopping/removing the runtime session; a failed delete keeps the
-session visible and reports an error. Quit checkpoints and stops processes without
-deleting their records. While locked, the last checkpoint is retained and closing
-requires unlocking. Deleting a host deletes its metadata and credential in one atomic vault write,
-then its local records; adopting a pulled vault drops records whose host the
-vault no longer has.
+rewritten without it; no write puts sessions back. Each saved snapshot contains
+an independent UUID, host UUID, display name, plain-text terminal history and
+save date, plus the optional default-name flag and display number used to
+restore its label. Sessions checkpoint automatically on creation, every two
+seconds while unlocked, and before normal quit or vault lock. History is
+capped at 1 MiB from SwiftTerm's retained buffer. Unchanged snapshots are not
+rewritten. Explicit close deletes the encrypted record before
+stopping/removing the runtime session; a failed delete keeps the session
+visible and reports an error. Quit checkpoints and stops processes without
+deleting their records. While locked, the last checkpoint is retained and
+closing requires unlocking. Deleting a host deletes its metadata and credential
+in one atomic vault write, then its local records; adopting a pulled vault
+drops records whose host the vault no longer has.
 
 After unlock, saved snapshots restore their history as scrollback and reconnect
 automatically. Repeated restores skip already-mounted saved IDs. Restored output is fed only
@@ -243,6 +260,46 @@ or replayed as commands. Reconnect preserves the custom name and saved-copy
 identity. Snapshot output and custom names are never added to debug logging.
 Animations affect sidebar grouping and opacity, never terminal ownership; they
 respect accessibility Reduce Motion.
+
+### Versioning, releases and updates
+
+The version has one source: the git tag. `AppVersion` (`Update/AppVersion.swift`)
+is the only semver type; it accepts a leading `v`, orders `1.10.0` above
+`1.9.0`, and sorts a prerelease below its release. `scripts/build-app.sh
+--version X.Y.Z` writes `CFBundleShortVersionString` (and `--build N` writes
+`CFBundleVersion`) into the bundle's copy of `Info.plist`; without it a build
+reports `0.0.0-dev`. The footer, the MCP bridge and the updater all read
+`AppVersion.current`.
+
+Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`: it validates the
+tag, selects the newest Xcode, runs `swift test`, builds with `--version`, packs
+`Maine-X.Y.Z.dmg` and `Maine-X.Y.Z.dmg.sha256` with `scripts/make-dmg.sh`, and
+publishes both with `gh release create`. A hyphen suffix publishes a GitHub
+pre-release. The DMG holds `Maine.app` and an `Applications` symlink, and
+signing stays ad hoc (invariant 7). [releasing.md](releasing.md) has the flow,
+the Gatekeeper first-launch note, and what the checksum does and does not prove.
+
+The updater is deliberately small. `UpdateFeed` is pure: it decodes GitHub's
+latest-release JSON, rejects drafts, prereleases and anything not strictly
+newer, requires both assets behind HTTPS `github.com` URLs, and returns an
+`UpdateOffer` or nothing. `UpdateInstaller` downloads the DMG, streams its
+SHA-256 and compares it with the digest the coordinator read from the release's
+checksum file before anything is mounted, mounts it read-only, copies the app
+into a `.Maine-update-<uuid>` folder beside the running bundle, and checks its
+identifier and version.
+Because a running bundle cannot be replaced, a detached `/bin/bash` helper waits
+for the process to exit (60 s cap), moves the old bundle aside, moves the new
+one in, restores the old one if that fails, cleans up and relaunches. It refuses
+to install over an app under `/Volumes/`, inside App Translocation or with a
+read-only parent, and points the user at the release page instead.
+
+`UpdateCoordinator` checks at vault unlock and every 7200 s while unlocked, and
+stops the timer on lock. Automatic checks respect the Settings toggle (default
+on) and the skipped version, and stay silent on failure; a manual check reports
+the error. Install waits until no agent run and no sync push is in flight. The
+only network call is the single GET to the latest-release endpoint with a
+generic `User-Agent`; there are no identifiers, and the toggle and the skipped
+version stay in `UserDefaults`, never in the vault and never synced.
 
 ### Deliberate UI choices
 
@@ -258,8 +315,10 @@ respect accessibility Reduce Motion.
   Double-clicking a session name starts inline rename (Return commits, Escape
   cancels). One shared row background paints
   both hover and selection, including padding and the close control.
-* **Port sits beside IP / Hostname.** It defaults to 22, without a separate
-  label or explanatory text. Username can still defer to `~/.ssh/config`.
+* **Port is a separate optional field.** The editor has one Address field and a
+  Port field that is empty for the default; its prompt reads `22 (default)`, and
+  an empty or cleared value means 22. Username can still defer to
+  `~/.ssh/config`.
 * **Content outranks chrome.** A compact connection header shows the endpoint
   and a quiet status indicator; the exact command is available in its help tooltip.
   Native search supports Command-F; Delete closes a session rather than deleting
@@ -267,8 +326,9 @@ respect accessibility Reduce Motion.
 * **Resident in the menu bar and the Dock.** Maine uses the regular activation
   policy, so it has a Dock icon; clicking it restores the hidden window
   (`applicationShouldHandleReopen`). The status item stays too. Left-click restores the window;
-  right-click offers Open, Lock or Unlock, and Quit. Quit checkpoints sessions
-  and removes the vault key exactly like Command-Q.
+  right-click offers Open Maine, Lock or Unlock, Quit, and Stop All Agents while
+  any agent is active. Quit checkpoints sessions and removes the vault key
+  exactly like Command-Q.
 * **Copy Credentials.** **Host → Copy Credentials**, a host's context menu and
   the copy button that appears while hovering a host row (left of its close
   control; a checkmark confirms the copy) write `IP:`, `port:` (only when not
@@ -282,17 +342,19 @@ respect accessibility Reduce Motion.
 
 ## Agent access (MCP)
 
-Specified in [mcp.md](mcp.md); phase 1 is built. The pieces, in the order a
+Specified in [mcp.md](mcp.md); all three phases are built. The pieces, in the order a
 tool call travels:
 
-* **`Maine --mcp`** (`Agents/MCPBridge.swift`). `MaineEntryPoint` checks for
-  the flag before anything else, like the askpass branch, and never creates an
+* **`Maine --mcp`** (`Agents/MCPBridge.swift`). `MaineEntryPoint.mode` selects
+  the bridge before SwiftUI starts, next to the branch that checks
+  `MAINE_SSH_ASKPASS`, and it never creates an
   `NSApplication`. It speaks MCP's JSON-RPC over stdio (`initialize`, `ping`,
   `tools/list`, `tools/call`; requests handled concurrently), and forwards
   tool calls over the socket. Without a running app every call returns
   "Maine is not running…"; it never launches the app.
 * **The socket** (`Agents/AgentSocket.swift`, `AgentServer.swift`):
-  `~/Library/Application Support/Maine/agent.sock`, directory `0700`, socket
+  `~/Library/Application Support/Maine/agent.sock` (`MAINE_AGENT_SOCKET`
+  overrides it for the bridge), directory `0700`, socket
   `0600`, peers checked with `getpeereid`. Frames are a 4-byte length plus
   JSON (`AgentProtocol.swift`). The first frame must carry a paired client's
   token; `AgentClientStore` keeps only SHA-256 of each token in the Keychain
@@ -306,38 +368,73 @@ tool call travels:
   `{ <command>\n}; printf '\033]7770;<nonce>;%d\007' "$?"`; the terminal
   ignores that OSC and the driver finds it, with a fresh nonce per command, in
   the raw bytes, which yields the exit code and the exact end of the output.
-  Marker support is probed once when the session opens; shells without it fall
-  back to "quiet for 1.5 s and the last line looks like a prompt". Output is
-  cleaned (`AgentOutput.swift`: escapes stripped, `\r`/backspace applied,
-  2 MiB ring, 64 KiB per result, cut in the middle). Agent input waits while
-  the user is typing.
+  Marker support is probed once after login settles or before the first
+  command; shells without it fall back to "quiet for 1.5 s and the last line
+  looks like a prompt". Output is cleaned (`AgentOutput.swift`: escapes
+  stripped, `\r`/backspace applied, 2 MiB ring, 64 KiB per result, cut in the
+  middle). Agent input waits while
+  the user is typing. A remote shell that already emits OSC 133 marks is run
+  bare (`osc133` mode, `OSC133Detector`). `type_password` types the host's
+  saved password only when the last screen line passes
+  `SSHAskPass.isPasswordPrompt`; the password is added to the output mask
+  list first, so no later result or screen read shows it.
+* **Activity log** (`AgentAudit.swift`, `PasswordStore.appendAgentAudit`).
+  Entries live in the encrypted local state file with access rules; newest
+  1000 kept; Settings → Agents → Activity shows the latest 100 with **Clear…**;
+  hidden while locked. It records sessions opened, handed over and closed,
+  commands with exit codes, key names (literal text is recorded only as a
+  length), and each time a saved password was typed; never passwords, output
+  or the literal text of sent keys.
 * **Capturing terminal** (`Sessions/CapturingTerminalView.swift`). SwiftTerm's
   `LocalProcessTerminalView` hands PTY bytes straight to its parser and keeps
-  its `LocalProcess` internal, so agent sessions use a `TerminalView` that owns
-  a public `LocalProcess`, passes each byte batch to the driver and then
-  renders it. Human sessions keep `LocalProcessTerminalView` unchanged.
-* **Lifecycle** (`AgentCoordinator.swift`). The master switch starts and stops
-  the server. Agent sessions are ephemeral: `SessionManager` never checkpoints
-  them until the user chooses **Keep Session**; ending control (Stop, Stop All,
-  revoke, access removed, switch off) keeps the session open and marked.
-  Locking the vault pauses every agent and fails every tool; unlocking resumes
-  only what the lock paused. Access rules live in the encrypted local state
-  file next to the session snapshots, so they never sync.
+  its `LocalProcess` internal, so every session uses a `TerminalView` that owns
+  its own `LocalProcess`, passes each byte batch to the session (and its
+  driver, if an agent is attached) and then renders it. Its view is never
+  replaced while the session lives, so this is what lets **Hand to Agent**
+  attach a driver to a session the user opened
+  (`SessionManager.handToAgent` behind `AgentCoordinator`; right-click a
+  session row and choose Hand to Agent → client). Hand-off needs agent
+  access on, the vault unlocked, an allowed host, a paired client, a live
+  session and a shell at a prompt, because the first `run` types into it. A handed-off session stays
+  an ordinary saved session and returns to the user when the agent stops; one
+  an agent opened stays ephemeral until **Keep Session**. The cost is that
+  parsing happens on the main queue instead of SwiftTerm's IO thread: a 30 MB
+  flood took about 15 s instead of 11.5 s in a headless measurement. While the
+  user drives, clipboard (OSC 52), link clicks and the bell behave as in the
+  stock view; while an agent drives, they are off.
+* **Lifecycle** (`AgentCoordinator.swift`). The master switch, off by default,
+  starts and stops the server. Agent sessions are ephemeral: `SessionManager`
+  never checkpoints them until the user chooses **Keep Session**; ending
+  control (Stop, Stop All, revoke, access removed, switch off) keeps the
+  session open and marked. Their sidebar rows carry an agent badge, and the
+  strip above the terminal shows who drives it with **Pause**, **Stop** and
+  **Keep Session**. Locking the vault pauses every agent and fails every tool;
+  unlocking resumes only what the lock paused. Access rules live in the encrypted local state file next to the
+  session snapshots, so they never sync.
 
 ## The Android client
 
-Kotlin + Jetpack Compose in `apps/android`, following the same five layers
-(models, SSH parameters, vault-backed store, sessions, views) without sharing
-code: the contract between clients is the file format, not a library.
+Kotlin + Jetpack Compose in `apps/android`, following the same structure
+(models, SSH parameters, vault-backed store, sessions, Compose views) plus a
+vendored terminal emulator, without sharing code: the contract between clients
+is the file format, not a library.
 
 Three platform differences are load-bearing:
 
-* **No system `ssh`.** Android cannot fork `/usr/bin/ssh`, so the transport
-  is the sshj library instead of a PTY child process. `SshTarget` keeps the
-  macOS display rules (port 22 omits `-p`, empty user omits `-l`) and now
-  also carries the dial parameters (hostname, port, username) the transport
-  uses. The SSH layer stays behind the `SshConnection` interface, so the UI
-  and session lifecycle do not change when the transport lands.
+* **No system `ssh`.** Android cannot fork `/usr/bin/ssh`, so `SshjConnection`
+  is a live sshj transport instead of a PTY child process. `SshTarget` keeps
+  the macOS display rules (port 22 omits `-p`, empty user omits `-l`) and
+  models the dial parameters (hostname, port, username); the live transport
+  dials the saved host fields directly. The transport stays behind the
+  `SshConnection` interface, so the UI and
+  session lifecycle do not depend on it. Every sshj call runs off the main
+  thread: connecting and reading on one worker, and input, resize and close on
+  a single-threaded executor that also collapses a burst of resizes. There is
+  no key reader, so a host needs a saved password (password auth only; key
+  import is a later pass). Host keys are pinned on first use in
+  app-private `files/known_hosts`, a fingerprint file kept outside the vault
+  and keyed by host UUID; a changed key is refused with both fingerprints in
+  the error, and deleting a host forgets its pin.
 * **The vault file is portable.** `VaultStore` implements the macOS version-2
   envelope byte-for-byte — same JSON fields, same PBKDF2-SHA256 parameters
   (600,000 iterations, 32-byte salt), same AES-256-GCM nonce layout and the
@@ -353,11 +450,23 @@ Three platform differences are load-bearing:
   on read and write, and compares case-insensitively everywhere else.
 
 Session semantics mirror macOS: sessions keyed by session UUID, explicit
-close deletes the encrypted record first (failure keeps the session
-visible), backgrounding checkpoints scrollback like a quit, restore
-reconnects automatically with history as scrollback (never replayed). The
-terminal UI is deliberately a stub for now — scrollback text plus an input
-row — with full terminal emulation replacing only the output view later.
+close deletes the encrypted record first (failure keeps the session visible),
+backgrounding checkpoints scrollback like a quit, and restore reconnects
+automatically. History is capped at 1 MiB like macOS. Restore replays the
+saved output stream into the emulator once, which keeps colors; emulator
+replies are suppressed and the main screen is restored afterwards, so the
+transcript never answers terminal queries or reaches the transport as
+commands.
+
+The terminal is Termux's emulator and view, vendored under `terminal/` and
+driven through a `Transport` interface instead of a PTY. It is the input
+surface: tapping it raises the keyboard, typing goes straight to the remote
+shell, and there is no separate input field. The emulator lives in the
+session, so navigating away and back re-attaches to the same state. A keys row
+(ESC, one-shot CTRL and ALT, TAB and the four arrows) appears while the
+keyboard is up, because a soft keyboard has none of those. Text selection,
+pinch zoom, OSC 52 clipboard access and Maine's own dark terminal palette come
+from the vendored view.
 
 ## The sync server
 
@@ -376,8 +485,8 @@ One decision keeps the server small: it is a dumb slot store, not a service.
   decrypts, transforms or merges anything.
 * Writes are conditional on the version the client last saw (`If-Match`);
   a stale write is a `409` and the client resolves it locally by keeping a
-  conflict copy. The server keeps the last 32 versions of each slot for
-  recovery.
+  conflict copy. The server keeps the last 32 versions of each slot by default
+  (`MAINE_SYNC_KEEP_VERSIONS`) for recovery.
 * One binary, one SQLite file, plain HTTP on loopback by default. TLS is the
   reverse proxy's job, which also makes "sync over Tailscale without TLS" a
   supported, honest configuration. An optional create secret gates slot
@@ -416,8 +525,18 @@ parts where being wrong is expensive:
 * persistence, restart behaviour and file permissions;
 * the exact `ssh` argument lists, including "port 22 means say nothing";
 * the `~/.ssh/config` reader, including `Include`, comments and wildcards;
-* the PTY session lifecycle — start, receive output, exit with a code, and
-  disconnect — using a real child process;
+* the PTY session lifecycle, start, receive output, exit with a code, and
+  disconnect, using a real child process;
+* the agent surface: tool dispatch and access (`AgentToolsTests`,
+  `AgentAccessTests`), the completion marker and OSC 133 parsers
+  (`CommandCompletionTests`, `OSC133Tests`), the driver, protocol frames and
+  socket server, the stdio bridge, and the encrypted activity log
+  (`AgentAuditTests`);
+* the updater's testable parts: semver parsing and ordering
+  (`AppVersionTests`), release JSON into an offer including drafts, prereleases
+  and missing assets (`UpdateFeedTests`), SHA-256 vectors and the swap helper
+  against temporary bundles (`UpdateInstallerTests`), and the skip, toggle and
+  development-build rules with an injected fetch (`UpdateCoordinatorTests`);
 * the sync server's protocol — create, conditional pull, conflict, rotation,
   retention and deletion — over real HTTP against a real SQLite file
   (`cargo test` in `apps/sync-server`), plus a curl smoke script that runs
@@ -430,19 +549,30 @@ parts where being wrong is expensive:
 * visible, full-window layout after both an unexpected exit 255 and an intentional
   disconnect returning 255, including resizing. These tests assert that the
   split view fits within the window and that the header, banner and terminal
-  stay on-screen, rather than merely checking view attachment.
+  stay on-screen, rather than merely checking view attachment;
+* the Android client's JVM unit tests (`./gradlew :app:testDebugUnitTest`):
+  host validation, the SSH display and dial mapping, the config reader, the
+  vault roundtrip against a Swift-generated golden vault, host-key
+  fingerprints and the session lifecycle.
 
-The last group runs a real `forkpty` and a real `/bin/echo`, so the most
-failure-prone part of the app is covered without needing a network.
+The PTY tests run a real `forkpty` and a real `/bin/echo`, so the most
+failure-prone part of the app is covered without needing a network. Window and
+layout tests are marked `.uiTest`; they open real windows, so they run only
+when `MAINE_UI_TESTS=1`.
 
 ## Known limitations
 
 * One window. Sessions are managed in the sidebar, not in separate windows.
 * `SSHTarget.Resolution` models exact `Host` matches only; wildcard and `Match`
-  blocks in `~/.ssh/config` are not resolved for display (OpenSSH still applies
-  them at connect time).
+  blocks in `~/.ssh/config` are not resolved (OpenSSH still applies them at
+  connect time).
 * No port forwarding UI, no SFTP, no key management, no known-hosts editing.
-  Those are all handled by `~/.ssh/config` today, and adding a second place to
-  configure them would be a step backwards.
+  Port forwarding and key selection are configured in `~/.ssh/config` and the
+  key files it points at; host trust follows OpenSSH's `known_hosts`. Adding a
+  second place to configure them would be a step backwards.
+* Android has no key import yet: every Android host needs a saved password.
+* Agent access has no approval modes. An allowed host is fully usable, and the
+  agent's own harness decides what it may run; Maine only scopes hosts and
+  records what happened.
 * Sync requires a server the user runs; there is no hosted option. The macOS
   client implements the protocol; Android does not yet.

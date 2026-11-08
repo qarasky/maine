@@ -8,6 +8,26 @@ and how "workspaces" (several tokens on one device) should behave.
 
 Read the protocol document first; this one assumes it.
 
+## Status on macOS
+
+`Sources/Maine/Sync/` implements the protocol; Settings → Sync and the sidebar
+footer expose it:
+
+- create, join (including the empty-slot push), pull, push, rotate, disable and
+  delete;
+- one active profile, with the other profiles parked as workspace files;
+- conflict copies and the "another device changed the vault" banner;
+- pull on unlock and on app foreground, a 2 s push debounce, a 30 s `HEAD`
+  poll, a best-effort push on lock and a 2 s push on quit;
+- `0600` vault, copy and workspace files written with `Data.write(.atomic)`;
+- tokens in the Keychain (`Maine Sync`), profiles in preferences.
+
+Not implemented on macOS:
+
+- the version-history UI (`GET /v1/vault/versions`); the client never lists old
+  versions, so a pruned version has no recovery flow in the app;
+- several profiles syncing at once (deliberately, see Workspaces).
+
 ## Ground rules
 
 1. **The synced object is the vault file, byte for byte.** Clients never
@@ -24,7 +44,9 @@ Read the protocol document first; this one assumes it.
    no profile behaves exactly as today. Sync failures surface as status, not
    as blocked editing or blocked unlocking.
 5. **Sync runs only while the vault is unlocked.** All triggers below assume
-   an unlocked vault with a session key available.
+   an unlocked vault with a session key available. The best-effort lock push is
+   started just before the vault locks and only reads the file, so it never
+   needs the key.
 6. **Diagnostics stay metadata-only.** Extend the existing rule: server URL
    and slot version may be logged; token, blob contents, conflict-copy
    contents may not.
@@ -37,9 +59,10 @@ A **profile** is the client-side record of one sync pairing:
 | ----- | ------ | ------- |
 | `id` | no | Preferences; a client-generated UUID |
 | `name` | no | Preferences; user-editable label ("Homelab") |
-| `serverUrl` | no | Preferences |
+| `serverURL` | no | Preferences |
 | `token` | **yes** | OS secure storage, keyed by profile `id` |
 | `lastVersion` | no | Preferences; the `ETag`/version the local vault came from (0 = never synced) |
+| `lastSHA256` | no | Preferences; hex SHA-256 at `lastVersion`, used to skip no-op pushes |
 | `lastSyncedAt` | no | Preferences; for UI only |
 
 The token lives outside the vault deliberately. It must survive a remote vault
@@ -55,10 +78,10 @@ Per-platform secure storage:
 | macOS | Keychain generic password, service `Maine Sync`, account = profile id |
 | Android | Keystore-encrypted preferences (the vault key itself stays memory-only; the token must persist across launches, so it needs Keystore-backed storage) |
 
-> macOS note: the current invariant says the Keychain holds only the session
-> helper key. Storing the sync token there is a deliberate, documented
-> extension of that invariant, and should be made explicitly when the client
-> work starts — not smuggled in.
+> macOS note: the Keychain now holds this Mac's vault key
+> (`app.maine.vault-key`), the sync tokens (`Maine Sync`, account = profile id)
+> and the MCP client token hashes (`Maine Agents`). That extension of the
+> invariant is recorded in `AGENTS.md`; it is not a pending question.
 
 ## Workspaces: several tokens on one device
 
@@ -68,18 +91,23 @@ design decision is entirely client-side.
 
 **Recommended model: a profile list with exactly one active profile.**
 
-- Settings shows all profiles; the user can pair as many as they want.
+- Settings shows all profiles, marks the active one, and switches to another
+  when its row is clicked; the user can pair as many as they want.
 - Only the active profile's vault is the live `passwords.maine`. This keeps
   the "one active vault file" invariant intact and keeps every existing
   feature (hosts, sessions, keychain entry, helper protocol) untouched.
 - Inactive workspaces keep their last synced file as
   `passwords.workspace-<profile-id>.maine` (0600) next to the active vault.
-  Nothing about them is loaded into memory.
-- **Switching workspaces**: flush and push the current vault, close all open
-  sessions (their hosts belong to the vault being left), move the active file
-  to its workspace file, move the target workspace file into
-  `passwords.maine`, prompt for that vault's master password, then resume
-  normal startup (restore sessions, start syncing the new profile).
+  Nothing about them is loaded into memory. Pairing a second profile copies
+  the live vault into the outgoing profile's workspace file, so switching back
+  is lossless.
+- **Switching workspaces**: checkpoint every open session's snapshot into the
+  vault being left, stop and drop the sessions (their hosts belong to that
+  vault), push it with a 3 s timeout, move the active file to its workspace
+  file (or to a pre-sync copy when no profile is outgoing), move the target
+  workspace file into `passwords.maine` when it exists, lock, and ask for that
+  vault's master password; normal startup then restores sessions and resumes
+  syncing the new profile.
 - **Not in v1**: several profiles syncing concurrently in the background.
   It multiplies conflict paths, gives the "which vault is live?" question no
   good answer, and buys almost nothing — a workspace that is not active is
@@ -95,16 +123,18 @@ multi-vault feature and breaks the single-active-file invariant.
 | Event | Action |
 | ----- | ------ |
 | App unlocks the vault | Pull |
-| Join flow completes | Pull (or push, for an empty slot) |
+| Join flow completes | Adopt the file already downloaded (or push, for an empty slot) |
 | Every vault save (host edit, password change) | Push, debounced ~2 s |
-| Vault lock or quit | Best-effort push with a short timeout |
-| App foreground | Pull |
+| Vault lock | Best-effort push, fire and forget |
+| Quit | Best-effort push with a 2 s timeout |
+| App foreground | Pull (`HEAD` first) |
 | While unlocked | Poll every 30 s (`HEAD`; `304` almost always) |
-| Before switching workspaces | Flush + push |
-| Network/server failure | Back off 30 s → 2 min → 5 min, cap; never block the UI |
+| Before switching workspaces | Push with a 3 s timeout |
+| Network/server failure | Polling backs off 30 s → 2 min → 5 min, cap; never blocks the UI |
 
-One pull or push at a time per profile; a trigger while one is in flight sets
-a "dirty" flag rather than starting a second request.
+One pull or push at a time per profile. A trigger that arrives while a request
+is in flight is dropped, not queued: the next vault save (for a push),
+foreground or poll (for a pull) picks the work up again.
 
 ## Algorithms
 
@@ -112,39 +142,45 @@ a "dirty" flag rather than starting a second request.
 
 1. User provides server URL (and an optional name) and asks to enable sync.
 2. `POST /v1/vaults` with the current `passwords.maine` as the body (create
-   secret if the server requires one).
-3. Store the returned token in OS secure storage **before** showing success.
+   secret if the server requires one). With no local vault the body is empty.
+   The URL is normalized before sending: `http://` is added when no scheme is
+   given, and trailing slashes are trimmed; a reverse-proxy path is kept.
+3. If another profile was active, copy the live vault into that profile's
+   workspace file before saving the new profile, so switching back is lossless.
+4. Store the returned token in OS secure storage **before** showing success.
    The token is shown once, with a copy button and the sentence "this is the
    only time it can be shown."
-4. Save the profile with `lastVersion` from the response.
+5. Save the profile with `lastVersion` and `lastSHA256` from the response and
+   make it the active profile. The local vault is now this slot's file.
 
 ### Join (a new device adopts an existing slot)
 
-1. User pastes server URL + token. Normalize nothing by hand — the server
-   accepts any display form; just send it.
+1. User pastes server URL + token and the master password that vault uses.
+   Send the token as pasted (the server accepts any display form); only trim
+   surrounding whitespace. The URL gets the same normalization as Create.
 2. `GET /v1/vault`:
    - `204` — the slot is empty. Offer to push the local vault (this device
      becomes the origin), or cancel.
    - `200` — continue.
    - `401` — "token not recognized"; stop, change nothing.
-3. If the slot has a blob: show what is about to happen ("This token points
-   to a vault last updated <date>, <size>") and ask for the master password
-   that vault uses.
-4. Verify `X-Maine-SHA256` against the bytes fetched in step 2.
-5. Try to decrypt the downloaded bytes with the entered master password and
+3. Verify `X-Maine-SHA256` against the bytes just fetched.
+4. Try to decrypt the downloaded bytes with the entered master password and
    the client's vault parser:
-   - **Success** — if a local vault exists, move it to
-     `passwords.pre-sync-<YYYYMMDD-HHMMSS>.maine` (0600); then atomically
+   - **Success**: if another profile is active, push it (3 s timeout) and
+     move the live vault to that profile's workspace file. Otherwise, if a
+     local vault exists, move it to
+     `passwords.pre-sync-<YYYYMMDD-HHMMSS>.maine` (0600). Then atomically
      place the downloaded file as `passwords.maine`. Save the profile with
-     the response's version.
+     the response's version and make it active.
    - **Decryption failure** — wrong master password or not a vault this
      client can read. Change nothing; keep the downloaded bytes as
      `passwords.remote-<YYYYMMDD-HHMMSS>.maine` (0600) and explain.
    - **Payload `schemaVersion` newer than this client supports** — same
      treatment as failure: do not adopt a vault you cannot understand;
      tell the user to update the app.
-6. On success, continue normal startup: unlock, restore sessions, start
-   polling.
+5. On success, unlock with the password just verified, reload the host list,
+   restore sessions and start polling. The user is not asked for the password
+   a second time.
 
 ### Pull
 
@@ -152,8 +188,9 @@ a "dirty" flag rather than starting a second request.
    `If-None-Match: "v<lastVersion>"`.
 2. `304` — done. `204` — empty slot; nothing to adopt (offer push only if the
    user just created the profile this way). `401` — mark the profile as
-   "token rejected", stop syncing it, keep the local vault working. `200` —
-   continue.
+   "token rejected", stop polling, keep the local vault working. (macOS stops
+   the 30 s loop; a later foreground or edit tries again and sees `401`.)
+   `200`: continue.
 3. Verify `X-Maine-SHA256`.
 4. Decrypt-check with the session key (already available — the vault is
    unlocked). Failure means this is not the same vault; keep the bytes as
@@ -166,12 +203,15 @@ a "dirty" flag rather than starting a second request.
    vault. Sessions whose hosts still exist keep running — never reparent or
    restart a terminal for a sync.
 7. Session snapshots do not travel: they live in a device-local file next
-   to the vault (`sessions-<vault id>.maine` on macOS), sealed with the
-   vault's key and never pushed. Writing them must not mark the vault dirty
-   or schedule a push. After adopting, drop local records whose host the
+   to the vault (`sessions-<vault id>.maine` on macOS, which also holds
+   collapsed groups, agent access rules and the agent activity log), sealed
+   with the vault's key and never pushed. Writing it must not mark the vault
+   dirty or schedule a push. After adopting, drop local records whose host the
    adopted vault no longer has. A pulled vault written by an older client may
-   still carry a `sessions` array in its payload; ignore it rather than
-   restoring another device's sessions, and never write one.
+   still carry a `sessions` array in its payload: on the next unlock the
+   macOS client copies those records into the local file (a local record with
+   the same id wins) and rewrites the vault without the array. A new client
+   never writes one.
 
 ### Push
 
@@ -185,8 +225,9 @@ a "dirty" flag rather than starting a second request.
    the conflict copy. Surface a banner: "Another device changed the vault.
    Your version was saved as passwords.conflict-…".
 4. `413` — "the vault is larger than this server accepts"; stop pushing
-   until the file shrinks or the operator raises `--max-blob`.
-5. `401` — as in Pull. `428` — a client bug; log it and stop pushing.
+   until the vault file changes again or the operator raises `--max-blob`.
+5. `401` as in Pull. `428` is a client bug: surface it as a failure and do
+   not retry that write.
 6. Optimisation worth doing: skip the push when the local file's SHA-256
    equals the hash recorded at `lastVersion` (no-op saves are common).
 
@@ -217,7 +258,7 @@ Two distinct actions:
 | `403` on create | Ask for the create secret; it is a server setting, not a token |
 | `409` / `412` | Pull, conflict copy, adopt, banner (see Push) |
 | `413` | Stop pushing; tell the user the vault is too large for the server |
-| `404` on a version fetch | The version was pruned; offer the next-oldest from the versions list |
+| `404` on a version fetch | The version was pruned; offer the next-oldest from the versions list (not implemented in the macOS app) |
 | `5xx` | Treat like offline; back off and retry |
 | Malformed JSON | Treat like `5xx`; never crash the app |
 
@@ -228,7 +269,7 @@ Two distinct actions:
 | HTTP | `URLSession` | `OkHttp` |
 | Secure token storage | Keychain | Keystore-backed prefs |
 | Atomic vault replace | `Data.write(options: .atomic)` | temp file + `renameTo`, then fsync |
-| Scheduling | `Timer` + `scenePhase` | coroutine + lifecycle observer |
+| Scheduling | 30 s async loop + `NSApplication.didBecomeActiveNotification` | coroutine + lifecycle observer |
 | File permissions | `0600` (existing helper) | app-private storage (existing) |
 | Conflict copies | Same directory as the vault, same permission helper | Same |
 
@@ -260,25 +301,43 @@ For a two-device test without a second machine, `curl` is device B:
 [`apps/sync-server/scripts/smoke.sh`](../apps/sync-server/scripts/smoke.sh)
 does exactly that.
 
-## Open decisions for the client phase
+On macOS, `SyncEngineTests` (9 tests) covers create, the hash-skip, a push
+conflict, a wrong master password, the empty slot, the pre-sync copy, the
+conflict copy, a foreign vault, and rotate/delete. `SyncServerIntegrationTests`
+(1 test) runs create, join, push, pull, conflict, rotate and delete against the
+real server (`MAINE_SYNC_SERVER_BIN`). Items 9 and 10 are properties of the
+implementation rather than separate tests: the sync code has no logging calls,
+and every vault write goes through `Data.write(.atomic)` plus `0600`.
 
-Small, deliberate choices that are better made with UI in front of you:
+## Decisions the macOS client settled
 
-- Conflict-copy naming and where the "a conflict was saved" banner lives.
-- Whether the sidebar shows a per-profile sync status dot, and its vocabulary
-  ("synced", "syncing", "offline", "token rejected", "conflict").
-- Profile naming UI and the exact switching flow (including what happens to
-  unsaved editor state when switching).
-- Whether `lastSyncedAt`/version metadata lives in preferences or a small
-  sidecar JSON; preferences are fine for v1.
-- The wording of the token-loss warning in the rotate dialog.
+These were open while the client was only a spec. The macOS client answers them
+as follows; Android may choose differently, because the wire contract does not
+care.
 
-**Resolved on macOS (2026-10-13):** conflict copies are
-`passwords.conflict-<YYYYMMDD-HHMMSS>.maine` and the banner is the app's
-standard alert; the sidebar footer and Settings both show a status dot with
-the vocabulary "Synced / Syncing… / offline message / Token rejected /
-conflict copy name / failure message"; profiles are named, and switched, in
-**Settings → Sync** (switching flushes, closes sessions and asks for the
-target vault's master password); `lastVersion`, `lastSHA256` and `lastSyncedAt`
-live in preferences; and the rotate dialog carries the token-loss warning
-from the section above.
+- **Conflict copies and banner.** `passwords.conflict-<YYYYMMDD-HHMMSS>.maine`
+  next to the vault. The banner is the standard alert titled "Another device
+  changed the vault", naming the copy; the status shows "Conflict saved as
+  <name>".
+- **Status dot and vocabulary.** A 6-point dot appears in Settings → Sync and in
+  the sidebar footer while a profile is active. Labels: "Synced", "Syncing…",
+  the offline message, "Token rejected", "Conflict saved as <name>", or the
+  failure message. Green when synced, accent while syncing, orange when
+  offline, red for conflicts, failures and rejected tokens.
+- **Profile naming and switching.** Profiles are named on create and join, can
+  be renamed from their Settings row, and switch when another row is clicked.
+  Switching checkpoints and closes sessions, pushes the outgoing vault, swaps
+  the files, then asks for the target vault's master password. The host editor
+  draft lives in `AppState`, not in the view, so a switch does not move it into
+  the outgoing vault; the editor's password field locks with the vault.
+- **Metadata storage.** All of `lastVersion`, `lastSHA256` and `lastSyncedAt`
+  live on the profile in preferences (`MaineSyncProfiles`, plus
+  `MaineSyncActiveProfile` for the active id), not in a sidecar file.
+- **Rotate wording.** The confirmation warns that the old token stops working
+  immediately, and that if the response is lost the slot becomes unreachable
+  with no recovery.
+- **Token-once wording.** "Store it in a password manager now. The server keeps
+  only its hash, so it cannot be shown again."
+
+Still open: the version-history recovery flow for a pruned version; no client
+has it yet.

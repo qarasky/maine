@@ -44,7 +44,7 @@ public final class AppState: ObservableObject {
     }
 
     public func canSaveHost(_ host: Host, password: String) -> Bool {
-        host.isValid && isVaultUnlocked && !password.isEmpty
+        host.isValid && isVaultUnlocked
     }
 
     public struct AlertMessage: Identifiable, Equatable {

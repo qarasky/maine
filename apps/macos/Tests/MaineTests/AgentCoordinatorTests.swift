@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 @testable import Maine
 import Testing
@@ -32,7 +33,7 @@ struct AgentCoordinatorTests {
             try vault.saveLayout(groups: [prod], hosts: [web])
             store.load()
             let shell: (Maine.Host) -> TerminalSession = { host in
-                TerminalSession(host: host, executablePath: "/bin/sh", processArguments: [], capturesOutput: true)
+                TerminalSession(host: host, executablePath: "/bin/sh", processArguments: [])
             }
             sessions = SessionManager(store: store, makeSession: shell, makeAgentSession: shell)
             appState = AppState(passwords: vault)
@@ -148,5 +149,115 @@ struct AgentCoordinatorTests {
         fixture.coordinator.stopAll()
         #expect(fixture.coordinator.activeCount == 0)
         #expect(fixture.sessions.openSessions.count == 2)
+    }
+
+    @Test
+    func auditEntriesPersistShowWhileUnlockedAndClear() throws {
+        let fixture = try Fixture()
+        defer { fixture.tearDown() }
+        let entry = AgentAuditEntry(client: "Claude Code", hostName: "Web", sessionID: UUID(), kind: .run,
+                                    detail: "uptime", exitCode: 0)
+        fixture.coordinator.recordAudit(entry)
+        #expect(fixture.coordinator.auditEntries == [entry])
+        #expect(try fixture.vault.agentAudit() == [entry])
+
+        fixture.coordinator.vaultDidLock()
+        #expect(fixture.coordinator.auditEntries.isEmpty, "a locked Maine shows nothing")
+        fixture.coordinator.vaultDidUnlock()
+        #expect(fixture.coordinator.auditEntries == [entry])
+
+        fixture.coordinator.clearAudit()
+        #expect(fixture.coordinator.auditEntries.isEmpty)
+        #expect(try fixture.vault.agentAudit().isEmpty)
+    }
+
+    // MARK: - Hand to agent
+
+    /// A session the user opened, waited until its shell shows a prompt.
+    private func humanSessionAtPrompt(_ fixture: Fixture) async throws -> TerminalSession {
+        fixture.sessions.open(fixture.web)
+        let session = try #require(fixture.sessions.session(for: fixture.web.id))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
+            let last = session.screenText().rows.last { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
+            if PromptHeuristics.looksLikeShellPrompt(last) { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return session
+    }
+
+    @Test
+    func aHandedSessionIsDrivenByTheAgentButStaysTheUsers() async throws {
+        let fixture = try Fixture()
+        defer { fixture.tearDown() }
+        fixture.coordinator.setEnabled(true)
+        fixture.coordinator.setAccess(AgentAccess(groups: [fixture.prod.id]))
+        let client = try fixture.coordinator.addClient(name: "Agent").client
+        let session = try await humanSessionAtPrompt(fixture)
+
+        try fixture.coordinator.handToAgent(sessionID: session.id, clientID: client.id)
+        let driver = try #require(session.agent)
+        #expect(driver.clientID == client.id)
+        #expect(!session.isEphemeral, "the user opened it; it is still checkpointed and restored")
+        let result = try await driver.run("echo handed", timeout: .seconds(10))
+        #expect(result.completed && result.output.contains("handed"))
+        #expect(fixture.coordinator.auditEntries.map(\.kind) == [.handoff])
+
+        fixture.sessions.endAgentControl(session.id)
+        #expect(session.agent == nil)
+        #expect(session.formerAgentName == nil, "no 'agent disconnected' leftover: it was never an agent session")
+        #expect(!session.isEphemeral)
+    }
+
+    @Test
+    func handOffRefusesWhatAgentsMayNotOrCannotDrive() async throws {
+        let fixture = try Fixture()
+        defer { fixture.tearDown() }
+        let client = try fixture.coordinator.addClient(name: "Agent").client
+        let session = try await humanSessionAtPrompt(fixture)
+
+        // Master switch off, then enabled but the host not allowed.
+        #expect(throws: AgentHandOffError.notAllowed) { try fixture.coordinator.handToAgent(sessionID: session.id, clientID: client.id) }
+        fixture.coordinator.setEnabled(true)
+        #expect(throws: AgentHandOffError.notAllowed) { try fixture.coordinator.handToAgent(sessionID: session.id, clientID: client.id) }
+        fixture.coordinator.setAccess(AgentAccess(groups: [fixture.prod.id]))
+        #expect(throws: AgentHandOffError.notFound) { try fixture.coordinator.handToAgent(sessionID: session.id, clientID: UUID()) }
+        #expect(throws: AgentHandOffError.notFound) { try fixture.coordinator.handToAgent(sessionID: UUID(), clientID: client.id) }
+
+        // Something is running: the shell is not at a prompt.
+        session.sendInput(Array("sleep 30\n".utf8))
+        try? await Task.sleep(for: .milliseconds(500))
+        #expect(throws: AgentHandOffError.notAtPrompt) { try fixture.coordinator.handToAgent(sessionID: session.id, clientID: client.id) }
+        #expect(session.agent == nil)
+        session.sendInput([0x03])
+        try? await Task.sleep(for: .milliseconds(500))
+
+        try fixture.coordinator.handToAgent(sessionID: session.id, clientID: client.id)
+        #expect(throws: AgentHandOffError.alreadyDriven) { try fixture.coordinator.handToAgent(sessionID: session.id, clientID: client.id) }
+        #expect(fixture.coordinator.auditEntries.count == 1)
+    }
+
+    @Test
+    func clipboardWorksInHumanSessionsAndIsOffForAgents() throws {
+        let fixture = try Fixture()
+        defer { fixture.tearDown() }
+        let client = try fixture.coordinator.addClient(name: "Agent").client
+        fixture.sessions.open(fixture.web)
+        let session = try #require(fixture.sessions.session(for: fixture.web.id))
+        let view = try #require(session.terminalView as? CapturingTerminalView)
+        let board = NSPasteboard(name: NSPasteboard.Name("app.maine.tests.\(UUID())"))
+        view.pasteboard = board
+        defer { board.releaseGlobally() }
+
+        view.clipboardCopy(source: view, content: Data("from remote".utf8))
+        #expect(board.string(forType: .string) == "from remote")
+        #expect(view.clipboardRead(source: view) == Data("from remote".utf8))
+
+        let agentSession = fixture.agentSession(client)
+        let agentView = try #require(agentSession.terminalView as? CapturingTerminalView)
+        agentView.pasteboard = board
+        agentView.clipboardCopy(source: agentView, content: Data("planted".utf8))
+        #expect(board.string(forType: .string) == "from remote")
+        #expect(agentView.clipboardRead(source: agentView) == nil)
     }
 }

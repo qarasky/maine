@@ -1,7 +1,26 @@
 import Foundation
 
+/// Why a session could not be handed to an agent.
+public enum AgentHandOffError: Error, Equatable, LocalizedError {
+    case notFound, notAllowed, alreadyDriven, notAtPrompt
+
+    public var errorDescription: String? {
+        switch self {
+        case .notFound: "That session or agent no longer exists."
+        case .notAllowed: "Agent access is off, or this host is not allowed. Turn it on in Settings → Agents."
+        case .alreadyDriven: "An agent is already driving this session."
+        case .notAtPrompt: "Wait until the shell is at a prompt, with no command or full-screen program running."
+        }
+    }
+}
+
 public enum AgentDriverError: Error, Equatable, LocalizedError {
     case busy, paused, notConnected
+    /// ssh is up but no remote shell is ready yet (still connecting, or
+    /// waiting at a password, passphrase or host-key prompt).
+    case notReady
+    /// `type_password` found no password prompt on the last screen line.
+    case noPasswordPrompt
     /// The caller's `shouldStop` fired; the handler decides what to report.
     case stopped
 
@@ -10,7 +29,12 @@ public enum AgentDriverError: Error, Equatable, LocalizedError {
         case .busy: "a command is still running; use read_output, or send_keys ctrl-c"
         case .paused: "paused by the user"
         case .notConnected: "session is not connected"
+        case .notReady:
+            "ssh is still connecting and the remote shell is not ready, so the command was not typed. "
+                + "Use read_screen to see where it is (it may wait at a password or host-key prompt: "
+                + "type_password or send_keys answers those), or wait and retry"
         case .stopped: "not found"
+        case .noPasswordPrompt: "no password prompt is showing; the password was not typed"
         }
     }
 }
@@ -79,7 +103,7 @@ public final class AgentDriver: ObservableObject {
         var alternateScreen: Bool
     }
 
-    private enum Mode: String { case unknown, marker, quiet }
+    private enum Mode: String { case unknown, marker, quiet, osc133 }
 
     private struct PendingRun {
         var startCursor: Int
@@ -91,6 +115,8 @@ public final class AgentDriver: ObservableObject {
         var finished = false
         /// The marker probe, which must not release a `run`'s busy reservation.
         var isProbe = false
+        /// Where the command's own output starts, when the shell said so (`OSC 133;C`).
+        var outputStart: Int?
     }
 
     public let clientID: UUID
@@ -104,8 +130,13 @@ public final class AgentDriver: ObservableObject {
     private var mode = Mode.unknown
     private var pending: PendingRun?
     private var lastOutputAt = Date.distantPast
+    private var shellMarks = OSC133Detector()
+    /// The remote shell emitted `OSC 133;A` itself, so it has shell integration.
+    private var hasShellIntegration = false
     /// Set when agent control ends; every wait loop gives up.
     private var isDetached = false
+    /// Latched once a remote shell is up; see `isReady`.
+    private var reachedShell = false
     private static let poll = Duration.milliseconds(20)
 
     init(session: TerminalSession, client: AgentClient) {
@@ -117,6 +148,12 @@ public final class AgentDriver: ObservableObject {
     /// Bytes from the PTY, before the terminal renders them.
     func ingest(_ bytes: ArraySlice<UInt8>) {
         lastOutputAt = Date()
+        let marks = shellMarks.scan(bytes)
+        if marks.contains(where: { $0.mark == .promptStart }) { hasShellIntegration = true }
+        if mode == .osc133, !marks.isEmpty {
+            ingestIntegrated(bytes, marks: marks)
+            return
+        }
         guard var run = pending, !run.finished, var detector = run.detector else {
             output.append(bytes)
             return
@@ -140,20 +177,72 @@ public final class AgentDriver: ObservableObject {
         output.append(bytes[end...])
     }
 
+    /// A shell with its own integration marks: `C` starts the command's
+    /// output, the next `D` ends the command. Bytes still flow unchanged.
+    private func ingestIntegrated(_ bytes: ArraySlice<UInt8>,
+                                  marks: [(mark: OSC133Detector.Mark, end: ArraySlice<UInt8>.Index)]) {
+        var position = bytes.startIndex
+        for (mark, end) in marks {
+            output.append(bytes[position..<end])
+            position = end
+            guard var run = pending, !run.finished else { continue }
+            switch mark {
+            case .outputStart:
+                if run.outputStart == nil { run.outputStart = output.cursor }
+            case .commandDone(let code):
+                run.endCursor = output.cursor
+                run.exitCode = code
+                run.finished = true
+                isBusy = false
+                isActive = false
+            default:
+                break
+            }
+            pending = run
+        }
+        output.append(bytes[position...])
+    }
+
     // MARK: - Tools
 
-    /// After `open_session`: waits for login output to go quiet, then checks
-    /// once whether this shell supports the completion marker.
+    /// A remote shell is up and can take commands. False while ssh is still
+    /// connecting or authenticating, including at a password, passphrase or
+    /// host-key prompt. Latches, so a long-running command never un-readies it.
+    var isReady: Bool {
+        if reachedShell { return true }
+        guard let session, session.state == .connected else { return false }
+        if hasShellIntegration || session.isAtShellPrompt {
+            reachedShell = true
+        } else if output.cursor > 0, Date().timeIntervalSince(lastOutputAt) >= 1.5, !showsInputPrompt() {
+            // An unrecognised prompt style: output has gone quiet at no known question.
+            reachedShell = true
+        }
+        return reachedShell
+    }
+
+    /// ssh waits for the user: a password, passphrase, MFA code or host-key answer.
+    private func showsInputPrompt() -> Bool {
+        guard let session else { return false }
+        let last = session.screenText().rows.last { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
+        let line = last.trimmingCharacters(in: .whitespaces).lowercased()
+        return SSHAskPass.isPasswordPrompt(last) || line.contains("(yes/no") || line.contains("passphrase")
+            || line.hasSuffix(":") || line.hasSuffix("?")
+    }
+
+    /// After `open_session`: waits until the remote shell is ready, or until
+    /// ssh stops at a prompt only the agent can answer, or the session dies.
+    /// Then checks once whether this shell supports the completion marker.
     func settleAfterLogin(timeout: Duration) async -> ReadResult {
         let deadline = ContinuousClock.now + timeout
         while ContinuousClock.now < deadline, let session, session.state.isLive {
-            if output.cursor > 0, Date().timeIntervalSince(lastOutputAt) >= 1.5 { break }
+            if isReady { break }
+            // At a prompt: hand control back so the agent can answer it.
+            if session.state == .connected, output.cursor > 0,
+               Date().timeIntervalSince(lastOutputAt) >= 1.5, showsInputPrompt() { break }
             try? await Task.sleep(for: Self.poll)
         }
         let login = output.text(since: 0)
-        if session?.state.isLive == true, mode == .unknown {
-            await probeMarker()
-        }
+        if isReady, mode == .unknown { await chooseMode() }
         return ReadResult(output: login.text, cursor: login.cursor, busy: isBusy, truncated: login.truncated)
     }
 
@@ -161,6 +250,9 @@ public final class AgentDriver: ObservableObject {
     /// (access revoked mid-run); when it fires, `stopped` is thrown.
     func run(_ command: String, timeout: Duration, shouldStop: (@MainActor () -> Bool)? = nil) async throws -> RunResult {
         try ensureUsable()
+        // Nothing is typed before the remote shell is up: a command typed into
+        // a half-open connection lands in a password prompt or is lost.
+        guard isReady else { throw AgentDriverError.notReady }
         guard !isBusy else { throw AgentDriverError.busy }
         // Reserve before the first suspension, so a parallel run sees busy.
         isBusy = true
@@ -168,7 +260,7 @@ public final class AgentDriver: ObservableObject {
         do {
             await waitForHumanPause()
             try ensureUsable()
-            if mode == .unknown { await probeMarker() }
+            if mode == .unknown { await chooseMode() }
             if isDetached { throw AgentDriverError.stopped }
         } catch {
             isBusy = false
@@ -181,6 +273,7 @@ public final class AgentDriver: ObservableObject {
             pending = PendingRun(startCursor: start, nonce: wrapper.nonce, detector: CompletionDetector(nonce: wrapper.nonce))
             session?.sendInput(Array(wrapper.typedText.utf8))
         } else {
+            // Quiet-period and shell-integration modes type the command as is.
             pending = PendingRun(startCursor: start)
             session?.sendInput(Array((command + "\n").utf8))
         }
@@ -243,6 +336,30 @@ public final class AgentDriver: ObservableObject {
         if !isBusy { isActive = false }
     }
 
+    /// Types `password` plus Enter, but only when the last non-empty screen
+    /// line is a password prompt (`SSHAskPass.isPasswordPrompt`), so it can
+    /// never land in a shell line or an editor. The password joins the mask
+    /// list first, so no later output or screen read can reveal it.
+    func typePassword(_ password: String) async throws {
+        try ensureUsable()
+        await waitForHumanPause()
+        try ensureUsable()
+        // The prompt may still be on its way from the PTY to the screen.
+        let deadline = ContinuousClock.now + .milliseconds(500)
+        while !showsPasswordPrompt(), ContinuousClock.now < deadline { try? await Task.sleep(for: Self.poll) }
+        guard showsPasswordPrompt() else { throw AgentDriverError.noPasswordPrompt }
+        if !password.isEmpty, !output.masks.contains(password) { output.masks.append(password) }
+        isActive = true
+        session?.sendInput(Array((password + "\r").utf8))
+        if !isBusy { isActive = false }
+    }
+
+    private func showsPasswordPrompt() -> Bool {
+        guard let session else { return false }
+        let last = session.screenText().rows.last { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return last.map(SSHAskPass.isPasswordPrompt) ?? false
+    }
+
     /// Ends this driver's control; the session stays open.
     func detach() {
         isDetached = true
@@ -292,6 +409,18 @@ public final class AgentDriver: ObservableObject {
             return RunResult(completed: false, exitCode: nil, output: "", cursor: output.cursor, truncated: false,
                              mode: mode.rawValue)
         }
+        if mode == .osc133 {
+            // The shell marked where the output starts (when it emits `C`);
+            // otherwise skip the echoed command line. It ends at `D`, so no
+            // trailing prompt to trim.
+            var text = output.text(since: run.outputStart ?? run.startCursor, upTo: run.endCursor, maxBytes: Int.max).text
+            if run.outputStart == nil, let firstNewline = text.firstIndex(of: "\n") {
+                text = String(text[text.index(after: firstNewline)...])
+            }
+            let (cut, truncated) = AgentOutput.middleTruncated(text, maxBytes: 65_536)
+            return RunResult(completed: run.finished && !run.interrupted, exitCode: run.exitCode, output: cut,
+                             cursor: run.endCursor ?? output.cursor, truncated: truncated, mode: mode.rawValue)
+        }
         var text = output.text(since: run.startCursor, upTo: run.endCursor, maxBytes: Int.max).text
         if let nonce = run.nonce {
             // Drop the echoed prompt and wrapper: everything through the line
@@ -309,6 +438,12 @@ public final class AgentDriver: ObservableObject {
         let (cut, truncated) = AgentOutput.middleTruncated(text, maxBytes: 65_536)
         return RunResult(completed: run.finished && !run.interrupted, exitCode: run.exitCode, output: cut,
                          cursor: run.endCursor ?? output.cursor, truncated: truncated, mode: mode.rawValue)
+    }
+
+    /// A remote shell that already emits `OSC 133` needs no wrapper; any other
+    /// is probed once for Maine's own marker, else it falls back to quiet mode.
+    private func chooseMode() async {
+        if hasShellIntegration { mode = .osc133 } else { await probeMarker() }
     }
 
     /// Types a wrapped `true` and waits up to 2 s for its marker.

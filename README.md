@@ -10,9 +10,15 @@
 
 Maine is a small, local-first SSH client for macOS. It keeps hosts and passwords together in one master-password-encrypted file, opens sessions by running the system `ssh` client you already trust, and reconnects your sessions automatically after unlock. There is no cloud of ours and no telemetry: sync is optional, self-hosted, and the server only ever sees encrypted bytes.
 
-[Quick start](#quickstart) · [What's in the vault](#whats-in-the-vault) · [Build from source](#build-and-develop)
+[Install](#install) · [Quick start](#quickstart) · [What's in the vault](#whats-in-the-vault) · [Build from source](#build-and-develop)
 
 [![Maine on macOS with two sessions on one host](docs/images/maine-macos.png)](docs/images/maine-macos.png)
+
+## Install
+
+Download `Maine-X.Y.Z.dmg` from [GitHub Releases](https://github.com/qarasky/maine/releases), open it and drag **Maine** onto **Applications**. Releases are ad-hoc signed and not notarized (there is no Developer ID, by design), so the first launch of a downloaded copy may be blocked: right-click **Maine** in Finder and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/Maine.app`. macOS remembers the choice.
+
+Maine updates itself. It checks once when the vault unlocks and then every two hours while it is unlocked, and **Maine → Check for Updates…** checks on demand. A newer release brings a popup with **Update**, **Later** and **Skip This Version**; **Update** downloads the disk image, verifies its published SHA-256, replaces the app and relaunches. The check is one request to GitHub's public Releases API with no identifiers, and **Settings → Updates** turns it off. Integrity means HTTPS plus SHA-256 from the same release, not proof of authorship. [docs/releasing.md](docs/releasing.md) covers how releases are cut and verified.
 
 ## Why
 
@@ -20,8 +26,8 @@ Maine is the shortest path between "I have a server" and "I am logged in". It is
 
 ## Quickstart
 
-1. **Build and open the app** ([from source](#build-and-develop)). On first launch, create the password vault with a master password of at least 12 characters. Maine asks for it on every launch; canceling leaves passwords locked. Closing the window does not quit: Maine stays in the Dock and the menu bar. Clicking the Dock icon or left-clicking the menu bar item reopens the window; a right-click on the menu bar item offers Lock, Unlock and Quit.
-2. **Add a host.** Click **New Host** (or press ⌘N) and fill in a name, a hostname or IP, and a password. Port and username are optional — leave them at `22` and blank to let OpenSSH decide from `~/.ssh/config`. Passwords cannot be edited or saved while the vault is locked.
+1. **Install the app** ([from Releases](#install)) or [build it from source](#build-and-develop). On first launch, create the password vault with a master password of at least 12 characters. Maine asks for it on every launch; canceling leaves passwords locked. Closing the window does not quit: Maine stays in the Dock and the menu bar. Clicking the Dock icon or left-clicking the menu bar item reopens the window; a right-click on the menu bar item offers Open Maine, Lock or Unlock, Quit, and Stop All Agents while agents are active.
+2. **Add a host.** Click **New Host** (or press ⌘N) and fill in a name and a hostname or IP. Port, username and password are optional: leave the port blank for `22` and the username blank to let OpenSSH decide from `~/.ssh/config`, your key or the local user, and leave the password empty for key login through `~/.ssh` and `ssh-agent`. Maine types a saved password when the server asks; clearing the field removes it. Passwords cannot be edited or saved while the vault is locked.
 3. **Connect.** Click a host in the sidebar to connect immediately. There is no intermediate host-details page.
 4. **Work.** Click the sidebar session's **×** (or press ⇧⌘W) to close it and disconnect. The saved host stays in the list. Double-click a session name to rename it in place (Return saves, Escape cancels).
 5. **Come back.** Quit and reopen Maine, then unlock the vault. Sessions return with their names and history, and reconnect automatically with history kept as scrollback. Switching sessions happens entirely in the sidebar.
@@ -30,15 +36,15 @@ Keyboard shortcuts: ⌘N new host, ⌘F search hosts, ⌘⏎ connect the selecte
 
 ## Why not just SSH?
 
-Plain `ssh` is great if you live in a terminal. Maine is for everything around it: saved hosts with passwords supplied automatically, multiple named sessions per host with scrollback that survives restarts, and click-to-connect without retyping addresses. The connection itself is still your `ssh`, so `ProxyJump`, `Match`, `IdentityFile`, `ForwardAgent`, certificates and hardware keys behave exactly as they do in a terminal.
+Plain `ssh` is great if you live in a terminal. Maine is for everything around it: saved hosts whose passwords are supplied automatically (or that have no password at all, so your keys and `ssh-agent` do the work), multiple named sessions per host with scrollback that survives restarts, and click-to-connect without retyping addresses. The connection itself is still your `ssh`, so `ProxyJump`, `Match`, `IdentityFile`, `ForwardAgent`, certificates and hardware keys behave exactly as they do in a terminal.
 
 ## Why not another SSH client?
 
-Maine has no accounts, no telemetry and no service of ours — nothing to sign up for and nothing that phones home. Optional sync runs on a server you host yourself. It never hides what it runs: the connection header shows the endpoint, and its tooltip shows the exact `ssh` command line. Hosts, passwords and session snapshots live in one portable encrypted file, not a proprietary sync service.
+Maine has no accounts, no telemetry and no service of ours — nothing to sign up for and nothing that phones home. Optional sync runs on a server you host yourself. It never hides what it runs: the connection header shows the endpoint, and its tooltip shows the exact `ssh` command line. Hosts and passwords live in one portable encrypted file; session snapshots sit in a second encrypted file beside it that never leaves the Mac.
 
 ## What's in the vault
 
-**`~/Library/Application Support/Maine/passwords.maine` is the single active vault**, written with `0600` permissions. It encrypts host names, addresses, ports, usernames, IDs and passwords together in an authenticated AES-256-GCM payload. A master password derives the encryption key with PBKDF2-SHA256 (600,000 iterations and a random salt). The unlock key lives in Keychain only for the current app session, for use by the SSH helper. It is removed on quit and reset on launch, so quitting always requires the master password again; closing the window while Maine runs in the menu bar does not. **Host → Lock Password Vault** and the menu bar's right-click menu remove it on demand. Locking does not disconnect already-open sessions.
+**`~/Library/Application Support/Maine/passwords.maine` is the single active vault**, written with `0600` permissions. It encrypts host names, addresses, ports, usernames, IDs and passwords together in an authenticated AES-256-GCM payload. A master password derives the encryption key with PBKDF2-SHA256 (600,000 iterations and a random salt). The unlock key lives in Keychain only for the current app session, for use by the SSH helper. It is removed on quit and reset on launch, so quitting always requires the master password again; closing the window while Maine runs in the menu bar does not. **Host → Lock Password Vault** and the menu bar's right-click menu remove it on demand. Locking does not disconnect already-open sessions. A host may have no saved password: Maine then runs plain `ssh`, so keys in `~/.ssh`, `ssh-agent` and `~/.ssh/config` authenticate, and any prompt appears in the terminal. Maine stores no private keys.
 
 To share or move hosts and passwords, choose **Host → Show Encrypted Vault** and copy **only `passwords.maine`**. Quit Maine on the receiving Mac, back up its existing files, then place the copy in its Maine Application Support directory. Open Maine and choose **Host → Unlock Password Vault**. Send the master password separately, not alongside the files. Host IDs must remain unchanged, and sharing the vault grants access to all passwords in that file. This is file sharing, not automatic sync or merging. A forgotten master password cannot be recovered on another Mac.
 
@@ -75,9 +81,13 @@ Maine can let AI agents such as Claude Code or Claude Desktop work on your serve
 2. **Add Client…**, give it a name, and copy the setup it shows once — for Claude Code a command like `claude mcp add maine --env MAINE_AGENT_TOKEN=… -- "/Applications/Maine.app/Contents/MacOS/Maine" --mcp`, for Claude Desktop the JSON for `claude_desktop_config.json`.
 3. Tick the groups and hosts agents may use. Everything else is invisible to them.
 
-Agents can list allowed hosts, open sessions, run commands (getting output and the exit code), read output and the screen, send keys, and close their sessions. Agent sessions appear under their host in the sidebar with an agent badge; the header shows who drives it with **Pause**, **Stop** and **Keep Session**, and the menu bar item has **Stop All Agents**. Agent sessions are not saved or restored unless you keep them, and locking the vault pauses every agent. There are no approval prompts in Maine — allowed means fully usable — because agents already ask for permission in their own harnesses.
+Agents can list the allowed hosts and their own sessions, open sessions, run commands (getting output and the exit code), read output and the screen, send keys, ask Maine to type a host's saved password into a password prompt, and close their sessions. `type_password` fires only when the last screen line is a password prompt (sudo, ssh, su): Maine types the saved password plus Return, never returns it, and masks it in later output.
 
-What leaves your Mac, only for allowed hosts: host names, groups, addresses, ports, usernames and the terminal output of agent sessions, sent to the agent and its model provider. Saved passwords are never sent. Access rules and client tokens stay on this Mac and never sync. Revoke a client in Settings to cut it off immediately. The design is [docs/mcp.md](docs/mcp.md).
+Agent sessions appear under their host in the sidebar with an agent badge; the header shows who drives it with **Pause**, **Stop** and **Keep Session**, and the menu bar item has **Stop All Agents**. Sessions an agent opened are not saved or restored unless you keep them, and locking the vault pauses every agent. Right-click one of your own sessions and choose **Hand to Agent → client** to let an agent drive it instead. Hand-off needs agent access on, the vault unlocked, the host allowed, a paired client, and the shell idle at a prompt, because the first command is typed into it; the session stays yours, keeps its scrollback, is still saved and restored, and returns to you when the agent stops.
+
+What leaves your Mac, only for allowed hosts: host names, groups, addresses, ports, usernames and the terminal output of agent sessions, sent to the agent and its model provider. Saved passwords are never sent; one is typed locally into a detected prompt only when the agent asks. There are no approval prompts in Maine — allowed means fully usable — because agents already ask for permission in their own harnesses. Access rules, client tokens and the activity log stay on this Mac and never sync. Revoke a client in Settings to cut it off immediately.
+
+**Settings → Agents → Activity** lists what agents did on this Mac: sessions opened, handed over and closed, commands with their exit codes, keys sent, and each time a saved password was typed. It keeps the newest 1,000 entries in the encrypted device-local file and shows the latest 100. It never records saved passwords, terminal output or the literal text sent with `send_keys` (only its length), is empty while the vault is locked, and has a **Clear…** button. The design is [docs/mcp.md](docs/mcp.md).
 
 ## Saved sessions
 
@@ -105,9 +115,11 @@ Requirements: macOS 14 (Sonoma) or later, Xcode 16 or later selected with `xcode
 ```sh
 cd apps/macos
 scripts/build-app.sh --release --run
+scripts/build-app.sh --release --version 1.2.3   # stamp a version into the bundle
+scripts/make-dmg.sh 1.2.3                        # build/Maine-1.2.3.dmg + .dmg.sha256
 ```
 
-The script compiles the package, wraps the binary in `Maine.app` with its `Info.plist` and `AppIcon.icns`, ad-hoc signs it, and (with `--run`) launches it. The app ends up at `apps/macos/build/Maine.app`; `open build/Maine.app` starts it again later. If `xcode-select -p` prints `/Library/Developer/CommandLineTools`, point it at Xcode once: `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer`.
+The script compiles the package, wraps the binary in `Maine.app` with its `Info.plist` and `AppIcon.icns`, ad-hoc signs it, and (with `--run`) launches it. The app ends up at `apps/macos/build/Maine.app`; `open build/Maine.app` starts it again later. A build without `--version` reports `0.0.0-dev`, which never auto-checks for updates. Releases are cut by pushing a `vX.Y.Z` tag; [docs/releasing.md](docs/releasing.md) has the flow and the Gatekeeper caveat. If `xcode-select -p` prints `/Library/Developer/CommandLineTools`, point it at Xcode once: `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer`.
 
 For a fast edit-build-run loop, or to see logging in a terminal:
 
@@ -126,7 +138,7 @@ swift test                     # everything that does not open a window
 MAINE_UI_TESTS=1 swift test    # plus the window/layout tests (they take over the screen; CI always runs them)
 ```
 
-The suite covers the configuration format, host validation, file persistence and permissions, the exact `ssh` command lines Maine builds, the `~/.ssh/config` reader, and the PTY session lifecycle (start, output, exit, disconnect) using a real child process. `packages/schema` has its own checks, which need nothing but Python 3:
+The suite covers the configuration format, host validation, file persistence and permissions, the exact `ssh` command lines Maine builds, the `~/.ssh/config` reader, the PTY session lifecycle (start, output, exit, disconnect) using a real child process, and the agent tools, activity log and OSC 133 parser. `packages/schema` has its own checks, which need nothing but Python 3:
 
 ```sh
 cd packages/schema
@@ -141,7 +153,15 @@ cargo test
 scripts/smoke.sh
 ```
 
-GitHub Actions runs all of this on every push to `main` and every pull request — the schema validator, `swift test`, the Android JVM unit tests, and the sync server's Rust tests, lint and formatting (see `.github/workflows/ci.yml`).
+The macOS client has a sync suite that runs against the real server after `cargo build --release` in `apps/sync-server`; point `MAINE_SYNC_SERVER_BIN` at the binary:
+
+```sh
+cd apps/macos
+MAINE_SYNC_SERVER_BIN="$PWD/../sync-server/target/release/maine-sync-server" \
+    swift test --filter SyncServerIntegrationTests
+```
+
+GitHub Actions runs all of this on every push to `main` and every pull request — the schema validator, `swift test` (including the macOS sync client integration suite against the built server), the Android JVM unit tests, and the sync server's Rust tests, lint and formatting (see `.github/workflows/ci.yml`).
 
 Repository layout:
 
@@ -153,7 +173,7 @@ maine/
 │   └── sync-server/        Rust sync server (zero-knowledge vault slots)
 ├── packages/
 │   └── schema/           Versioned JSON configuration format + validator
-├── docs/                 architecture.md, macos-design.md, sync-protocol.md, sync-client.md, images/
+├── docs/                 architecture.md, macos-design.md, mcp.md, releasing.md, sync-protocol.md, sync-client.md, images/
 └── README.md
 ```
 
@@ -163,7 +183,7 @@ Regenerate the M monogram icon with `swift scripts/render-mark.swift monogram <m
 
 ## Status
 
-The macOS application is the first client, and it is at version 1.0.0:
+The macOS application is the first client. Releases are tagged `vX.Y.Z` and published by CI as a DMG with a checksum:
 
 | | |
 | --- | --- |
@@ -174,11 +194,15 @@ The macOS application is the first client, and it is at version 1.0.0:
 | Error reporting for failed connections | done |
 | Unified encrypted hosts/password vault | done |
 | Saved passwords, portable encrypted vault, master-password unlock | done |
+| Key-based hosts (no saved password; uses `~/.ssh` keys and ssh-agent) | done |
 | Android client (vault parity, host CRUD, real terminal) | in progress |
 | Self-hosted sync server (Rust, zero-knowledge slots) | done |
 | Sync in the macOS client (create/join, conflict copies, workspaces) | done |
-| MCP agent access (sessions, run, output, keys) | done (phase 1) |
-| Agents typing saved passwords into sudo prompts | planned (phase 2) |
+| MCP agent access (sessions, run, output, keys) | done |
+| Agents typing saved passwords into password prompts | done |
+| MCP activity log, OSC 133 completion | done |
+| "Hand to Agent" for human-opened sessions | done |
+| DMG releases from tags, in-app update with SHA-256 check | done |
 | Sync in the Android client | not started |
 | Linux client | not started |
 | Accounts, hosted service, key management | not planned |

@@ -87,6 +87,25 @@ struct PasswordStoreTests {
     }
 
     @Test @MainActor
+    func hostWithoutPasswordSavesAndClearsAnOldPassword() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let vault = PasswordStore(fileURL: directory.appendingPathComponent("vault.maine"),
+                                  keychainService: "app.maine.tests.\(UUID())")
+        defer { try? vault.lock(); try? FileManager.default.removeItem(at: directory) }
+        try vault.unlock(masterPassword: "optional password test master")
+        let store = HostStore(vault: vault)
+        let host = Maine.Host(name: "Keys only", hostname: "keys.example")
+        try store.saveHost(host, password: "")
+        #expect(store.hosts == [host])
+        #expect(try vault.password(for: host.id) == nil)
+        try store.saveHost(host, password: "now a password")
+        #expect(try vault.password(for: host.id) == "now a password")
+        try store.saveHost(host, password: "")
+        #expect(store.hosts == [host])
+        #expect(try vault.password(for: host.id) == nil)
+    }
+
+    @Test @MainActor
     func unifiedHostStoreCommitsAndDeletesMetadataAndPasswordTogether() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let vault = PasswordStore(fileURL: directory.appendingPathComponent("vault.maine"),

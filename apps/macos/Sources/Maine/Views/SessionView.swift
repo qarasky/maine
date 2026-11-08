@@ -255,9 +255,6 @@ struct NoticeBanner: View {
             if session.needsVaultUnlock {
                 Button("Unlock Vault…") { appState.isVaultSheetPresented = true }
                     .fixedSize()
-            } else if session.needsPassword {
-                Button("Edit Host…") { appState.edit(session.host) }
-                    .fixedSize()
             } else {
                 Button("Try Again") { sessions.reconnectSession(session.id) }
                     .fixedSize()

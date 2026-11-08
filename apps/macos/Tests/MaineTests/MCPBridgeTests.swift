@@ -57,7 +57,7 @@ struct MCPBridgeTests {
         let names = reply["result"]?.array("tools")?.compactMap { $0.string("name") }
         #expect(names == AgentToolCatalog.tools.map(\.name))
         #expect(names == ["list_hosts", "list_sessions", "open_session", "run", "read_output", "read_screen",
-                          "send_keys", "close_session"])
+                          "send_keys", "type_password", "close_session"])
         for tool in reply["result"]?.array("tools") ?? [] {
             #expect(tool["inputSchema"]?.string("type") == "object")
             #expect(!(tool.string("description") ?? "").isEmpty)

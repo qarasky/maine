@@ -467,6 +467,7 @@ struct HostListView: View {
         .contextMenu {
             Button("Show Session") { sessions.selectSession(session.id) }
             sessionActions(session)
+            handToAgentMenu(session)
             Button("Reconnect") { sessions.reconnectSession(session.id) }
             Button("Close Session") { closeSession(session) }
         }
@@ -510,6 +511,21 @@ struct HostListView: View {
         renamingSessionID = nil
         renameFocused = false
         if !name.isEmpty { performSessionAction { try sessions.renameSession(id, to: name) } }
+    }
+
+    @ViewBuilder
+    private func handToAgentMenu(_ session: TerminalSession) -> some View {
+        let agents = AgentCoordinator.shared
+        if agents.canHandOff(session) {
+            Menu("Hand to Agent") {
+                ForEach(agents.clients) { client in
+                    Button(client.name) {
+                        do { try agents.handToAgent(sessionID: session.id, clientID: client.id) }
+                        catch { appState.showAlert(title: "Can't hand off this session", error.localizedDescription) }
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -719,7 +735,7 @@ struct HostListView: View {
                     .help("\(profile.name): \(sync.status.label)")
             }
 
-            Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0")
+            Text(AppVersion.current.description)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()

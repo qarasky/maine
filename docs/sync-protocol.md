@@ -30,8 +30,8 @@ Design rules that follow from this:
 
 - The server is not trusted with plaintext. Anyone who compromises it gets
   ciphertext and metadata only.
-- A write is conditional on the version the client last saw. The server
-  rejects stale writes; it never merges.
+- Every write after the first is conditional on the version the client last
+  saw. The server rejects stale writes; it never merges.
 - The server is deliberately boring: a client that can do HTTP and file I/O
   can implement this protocol in an afternoon.
 
@@ -45,24 +45,27 @@ carry no query strings and no cookies.
 
 **Token format.** 32 random bytes encoded with the alphabet
 `23456789ABCDEFGHJKLMNPQRSTUVWXYZ` (no `0`, `1`, `I`, `O`), 52 characters,
-displayed as `maine-XXXX-XXXX-…` grouped in fours. Servers accept the display
-form, lowercase, missing separators, and a missing `maine-` prefix; clients
-should send the display form. Tokens are secrets: never log them, never send
-them anywhere except the configured server, never store them in the vault.
+displayed as `maine-XXXX-XXXX-…` grouped in fours. Servers normalize a token
+by dropping everything that is not an ASCII letter or digit, uppercasing, and
+stripping a leading `MAINE`, so the display form, lowercase, spaces instead
+of dashes and a missing `maine-` prefix all work; clients should send the
+display form. Tokens are secrets: never log them, never send them anywhere
+except the configured server, never store them in the vault.
 
 **Request bodies.** Raw bytes, `application/octet-stream` recommended. The
 server treats them as opaque.
 
 **Timestamps.** Integer seconds since the Unix epoch, UTC.
 
-**Errors.** JSON object `{"error": "..."}`. Responses about the state of a
-slot (`409`, `412`, `428`) also carry `version`, `etag`, `size` and
-`updatedAt`, and repeat the version in the `X-Maine-Version` header, so a
-client can reconcile without another round trip.
+**Errors.** JSON object `{"error": "..."}`. `401` also sends
+`WWW-Authenticate: Bearer`. Responses about the state of a slot (`409`,
+`412`, `428`) carry `version`, `etag`, `size` and `updatedAt`, and repeat the
+version in the `X-Maine-Version` header, so a client can reconcile without
+another round trip.
 
 **Size limit.** The server has a configurable maximum blob size (default
 64 MiB, `--max-blob`). Bodies above it are rejected with `413` before they
-are stored.
+are stored; the same limit applies when a slot is created with a body.
 
 **Status codes.**
 
@@ -72,10 +75,11 @@ are stored.
 | `201` | Slot created |
 | `204` | Success without a body; also "the slot is empty" on `GET` |
 | `304` | `If-None-Match` matched; nothing changed |
-| `400` | Malformed request (bad precondition combination, non-numeric version) |
+| `400` | Malformed request (both preconditions, `If-Match: *`, an unparsable ETag, a non-numeric version, an empty body on `PUT`) |
 | `401` | Missing or invalid token |
 | `403` | Create secret missing or wrong |
 | `404` | Unknown endpoint, or a version that is not stored |
+| `405` | The path exists, but not for that method; the response carries `Allow` |
 | `409` | Write precondition failed: the slot moved on |
 | `412` | `If-None-Match: *` sent, but the slot already holds a blob |
 | `413` | Body exceeds the server's size limit |
@@ -126,12 +130,17 @@ secret, `413` when the body is too large.
 
 Responses:
 
-- `200` — body is the current blob. Headers: `ETag: "vN"`,
-  `X-Maine-Version: N`, `X-Maine-Size`, `X-Maine-SHA256` (hex of the body),
-  `X-Maine-Updated-At` (unix seconds), `Cache-Control: no-store`.
-- `304` — the client is up to date. Same validators, no body.
-- `204` — the slot is empty (`X-Maine-Version: 0`). This happens for a slot
-  created without a body, before its first `PUT`.
+- `200` — body is the current blob (`application/octet-stream`). Headers:
+  `ETag: "vN"`, `X-Maine-Version: N`, `X-Maine-Size`, `X-Maine-SHA256` (hex
+  of the body), `X-Maine-Updated-At` (unix seconds),
+  `Cache-Control: no-store`.
+- `304` — the client is up to date. It repeats `ETag`, `X-Maine-Version`,
+  `X-Maine-Size`, `X-Maine-Updated-At` and `Cache-Control: no-store`; there
+  is no body and no `X-Maine-SHA256`.
+- `204` — the slot is empty (`X-Maine-Version: 0`, no body). This happens for
+  a slot created without a body, before its first `PUT`. The empty check runs
+  before `If-None-Match`, so an empty slot answers `204` even to
+  `If-None-Match: *`.
 
 Clients must verify `X-Maine-SHA256` against the received bytes before
 adopting them.
@@ -149,11 +158,11 @@ edit made elsewhere.
 | Request header | Meaning |
 | -------------- | ------- |
 | `If-Match: "vN"` | Succeed only if the current version is `N`. The quotes are optional, as is the `W/` prefix. |
-| `If-None-Match: *` | Succeed only if the slot is empty. `If-Match: "v0"` is equivalent. |
+| `If-None-Match: *` | Succeed only if the slot is empty. `If-Match: "v0"` also works on an empty slot, but on a non-empty one it answers `409`, not `412`. |
 
 Rules:
 
-- The body must be non-empty; to remove a slot, use `DELETE`.
+- The body must be non-empty (`400`); to remove a slot, use `DELETE`.
 - Send at most one precondition header; both at once is `400`.
 - `If-Match: *` is not supported (`400`): it would allow a blind overwrite.
 - A write with no precondition at all is allowed **only** for the first
@@ -188,8 +197,8 @@ Newest first. No blobs.
 }
 ```
 
-The server keeps the last `--keep-versions` (default 32) versions per slot and
-prunes older ones on every write. Pruning is by count, not by age.
+The server keeps the last `--keep-versions` (default 32, minimum 1) versions per
+slot and prunes older ones on every write. Pruning is by count, not by age.
 
 ### `GET /v1/vault/versions/{n}` — read one old version
 
@@ -260,6 +269,6 @@ it.
 ## A worked example
 
 [`apps/sync-server/scripts/smoke.sh`](../apps/sync-server/scripts/smoke.sh)
-runs the whole protocol with `curl`: create, conditional pull, conflict,
-rotation and deletion. It is the shortest executable description of this
-document.
+runs the whole protocol with `curl`: create, a byte-for-byte pull, a
+conditional `304`, a conflict, a successful write, rotation and deletion. It
+is the shortest executable description of this document.

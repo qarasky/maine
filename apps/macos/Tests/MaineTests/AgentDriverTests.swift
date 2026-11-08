@@ -10,7 +10,7 @@ struct AgentDriverTests {
     private let client = AgentClient(id: UUID(), name: "Test agent", createdAt: Date())
 
     private func shellSession(for host: Maine.Host = Maine.Host(name: "Shell", hostname: "localhost")) -> TerminalSession {
-        TerminalSession(host: host, executablePath: "/bin/sh", processArguments: [], capturesOutput: true)
+        TerminalSession(host: host, executablePath: "/bin/sh", processArguments: [])
     }
 
     /// An interactive sh ignores SIGTERM, so tests end it the way a remote
@@ -62,6 +62,41 @@ struct AgentDriverTests {
         }
         #expect(await driver.readOutput(since: result.cursor, wait: nil, maxBytes: 65_536).output.contains("end"))
         #expect(!driver.isBusy)
+    }
+
+    /// A session whose process prints `script` output like ssh would, then
+    /// stands in for the remote shell (or stalls at a prompt).
+    private func scriptedSession(_ script: String) -> (TerminalSession, AgentDriver) {
+        let session = TerminalSession(host: Maine.Host(name: "Slow", hostname: "localhost"),
+                                      executablePath: "/bin/sh", processArguments: ["-c", script])
+        let driver = AgentDriver(session: session, client: client)
+        session.agent = driver
+        session.connect()
+        return (session, driver)
+    }
+
+    @Test
+    func runIsRefusedUntilTheShellIsUp() async throws {
+        // ssh is still "connecting": no output yet, then a login that takes 2 s.
+        let (session, driver) = scriptedSession("sleep 2; exec /bin/sh")
+        defer { endShell(session); session.disconnect() }
+        await #expect(throws: AgentDriverError.notReady) { _ = try await driver.run("echo early", timeout: .seconds(5)) }
+        #expect(!driver.isBusy)
+        _ = await driver.settleAfterLogin(timeout: .seconds(15))
+        let result = try await driver.run("echo late", timeout: .seconds(10))
+        #expect(result.output.contains("late"))
+    }
+
+    @Test
+    func aPasswordPromptIsNotAReadyShell() async throws {
+        let (session, driver) = scriptedSession("printf 'ubuntu@host password: '; sleep 30")
+        defer { session.disconnect() }
+        let started = ContinuousClock.now
+        _ = await driver.settleAfterLogin(timeout: .seconds(20))
+        // The agent gets control back to answer the prompt, not after 20 s.
+        #expect(ContinuousClock.now - started < .seconds(10))
+        #expect(!driver.isReady)
+        await #expect(throws: AgentDriverError.notReady) { _ = try await driver.run("echo no", timeout: .seconds(5)) }
     }
 
     @Test
@@ -170,6 +205,7 @@ struct AgentDriverTests {
     @Test
     func agentSessionsCannotReadOrWriteTheUsersClipboard() throws {
         let session = shellSession()
+        session.agent = AgentDriver(session: session, client: client)
         let view = try #require(session.terminalView as? CapturingTerminalView)
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("app.maine.tests.\(UUID())"))
         defer { pasteboard.releaseGlobally() }
@@ -249,5 +285,87 @@ struct AgentDriverTests {
         #expect(!human.isEphemeral)
         manager.close(host.id)
         #expect(manager.openSessions.contains { $0 === agentSession })
+    }
+
+    // MARK: - type_password
+
+    @Test
+    func typePasswordAnswersAPromptAndMasksItEverywhere() async throws {
+        let (session, driver) = await drivenShell()
+        defer { endShell(session) }
+        // The PTY echoes what is typed, so the secret really reaches the output.
+        let result = try await driver.run("printf '[sudo] password for alice: '; read -r p; echo \"got:$p\"",
+                                          timeout: .milliseconds(800))
+        #expect(!result.completed)
+        try await driver.typePassword("hunter2-secret")
+        var text = ""
+        let deadline = ContinuousClock.now + .seconds(8)
+        while !text.contains("got:\(AgentOutput.maskReplacement)"), ContinuousClock.now < deadline {
+            text = await driver.readOutput(since: 0, wait: .milliseconds(200), maxBytes: 65_536).output
+        }
+        #expect(text.contains("got:\(AgentOutput.maskReplacement)"))
+        #expect(!text.contains("hunter2-secret"))
+        #expect(text.contains(AgentOutput.maskReplacement))
+        #expect(!driver.screen().rows.joined(separator: "\n").contains("hunter2-secret"))
+    }
+
+    @Test
+    func typePasswordRefusesWhenNoPromptIsShowing() async throws {
+        let (session, driver) = await drivenShell()
+        defer { endShell(session) }
+        _ = try await driver.run("echo plain", timeout: .seconds(10))
+        await #expect(throws: AgentDriverError.noPasswordPrompt) {
+            try await driver.typePassword("never-typed")
+        }
+        let after = try await driver.run("echo ok", timeout: .seconds(10))
+        #expect(after.output.contains("ok"))
+        #expect(!after.output.contains("never-typed"))
+    }
+
+    @Test
+    func typePasswordRefusesPassphraseAndOneTimePrompts() async throws {
+        let (session, driver) = await drivenShell()
+        defer { endShell(session) }
+        _ = try await driver.run("printf 'Enter passphrase for key: '; read -r p", timeout: .milliseconds(800))
+        await #expect(throws: AgentDriverError.noPasswordPrompt) { try await driver.typePassword("nope") }
+        try await driver.send(keys: [.named("enter")])
+    }
+
+    // MARK: - OSC 133
+
+    /// A shell that already emits shell-integration marks, as a remote with
+    /// iTerm2/VS Code/Ghostty integration does.
+    private func integratedShell() async -> (TerminalSession, AgentDriver) {
+        let session = shellSession()
+        let driver = AgentDriver(session: session, client: client)
+        session.agent = driver
+        session.connect()
+        session.sendInput(Array("PROMPT_COMMAND='printf \"\\033]133;D;%d\\007\\033]133;A\\007\" $?'\n".utf8))
+        _ = await driver.settleAfterLogin(timeout: .seconds(10))
+        return (session, driver)
+    }
+
+    @Test
+    func existingShellIntegrationReplacesTheWrapper() async throws {
+        let (session, driver) = await integratedShell()
+        defer { endShell(session) }
+        let result = try await driver.run("echo hi; false", timeout: .seconds(10))
+        #expect(result.mode == "osc133")
+        #expect(result.completed)
+        #expect(result.exitCode == 1)
+        #expect(result.output.trimmingCharacters(in: .whitespacesAndNewlines) == "hi")
+        let again = try await driver.run("echo two", timeout: .seconds(10))
+        #expect(again.exitCode == 0)
+        #expect(again.output.trimmingCharacters(in: .whitespacesAndNewlines) == "two")
+        // The human sees no wrapper noise.
+        let seen = await driver.readOutput(since: 0, wait: nil, maxBytes: 65_536).output
+        #expect(!seen.contains("7770"))
+    }
+
+    @Test
+    func plainShellsStillUseTheMarker() async throws {
+        let (session, driver) = await drivenShell()
+        defer { endShell(session) }
+        #expect(try await driver.run("true", timeout: .seconds(10)).mode == "marker")
     }
 }

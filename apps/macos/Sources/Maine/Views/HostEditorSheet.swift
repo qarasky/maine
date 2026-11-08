@@ -16,6 +16,7 @@ struct HostEditorSheet: View {
 
     @FocusState private var focusedField: Field?
     @State private var password = ""
+    @State private var portText = ""
     @State private var passwordError: String?
     @State private var showVaultUnlock = false
 
@@ -49,6 +50,7 @@ struct HostEditorSheet: View {
         .frame(width: 480)
         .onAppear {
             focusedField = .name
+            portText = source.port == Host.defaultPort ? "" : String(source.port)
             loadPassword()
         }
         .sheet(isPresented: $showVaultUnlock) {
@@ -78,21 +80,18 @@ struct HostEditorSheet: View {
                 TextField("Name", text: draft.name)
                     .focused($focusedField, equals: .name)
 
-                LabeledContent("IP / Hostname") {
-                    HStack(spacing: 8) {
-                        TextField("192.168.x.x", text: draft.hostname)
-                            .labelsHidden()
-                            .accessibilityLabel("IP / Hostname")
-                            .focused($focusedField, equals: .hostname)
-                        TextField("22", text: portBinding)
-                            .labelsHidden()
-                            .accessibilityLabel("Port")
-                            .focused($focusedField, equals: .port)
-                            .frame(width: 64)
-                    }
-                }
+                TextField("Address", text: draft.hostname, prompt: Text("IP address or hostname"))
+                    .focused($focusedField, equals: .hostname)
 
-                TextField("Username", text: draft.username)
+                TextField("Port", text: $portText, prompt: Text("22 (default)"))
+                    .focused($focusedField, equals: .port)
+                    .onChange(of: portText) { _, text in
+                        let digits = String(text.filter { $0.isNumber }.prefix(5))
+                        if digits != text { portText = digits }
+                        draft.wrappedValue.port = Int(digits) ?? Host.defaultPort
+                    }
+
+                TextField("Username", text: draft.username, prompt: Text("Optional"))
                     .focused($focusedField, equals: .username)
 
                 if !store.groups.isEmpty {
@@ -104,7 +103,7 @@ struct HostEditorSheet: View {
                     }
                 }
 
-                SecureField("Password", text: $password)
+                SecureField("Password", text: $password, prompt: Text("Optional, leave empty for key login"))
                     .disabled(!appState.isVaultUnlocked)
                 if !appState.isVaultUnlocked {
                     Button(PasswordStore.shared.exists ? "Unlock Password Vault…" : "Create Password Vault…") {
@@ -128,17 +127,6 @@ struct HostEditorSheet: View {
             }
         }
         .formStyle(.grouped)
-    }
-
-    /// A text view of the port, so partial input is visible while typing.
-    private var portBinding: Binding<String> {
-        Binding(
-            get: { String(draft.wrappedValue.port) },
-            set: { newValue in
-                let digits = newValue.filter { $0.isNumber }
-                draft.wrappedValue.port = Int(digits) ?? Host.defaultPort
-            }
-        )
     }
 
     private var buttons: some View {

@@ -18,6 +18,7 @@ struct AgentToolsTests {
         var unlocked = true
         let prod = HostGroup(name: "Prod"), lab = HostGroup(name: "Lab")
         let web: Maine.Host, db: Maine.Host, loose: Maine.Host
+        var audit: [AgentAuditEntry] = []
         let alice = AgentClient(id: UUID(), name: "Alice agent", createdAt: Date())
         let bob = AgentClient(id: UUID(), name: "Bob agent", createdAt: Date())
 
@@ -36,15 +37,19 @@ struct AgentToolsTests {
             try vault.saveLayout(groups: [prod, lab], hosts: [loose, web, db])
             store.load()
             let shell: (Maine.Host) -> TerminalSession = { host in
-                TerminalSession(host: host, executablePath: executable, processArguments: [], capturesOutput: true)
+                TerminalSession(host: host, executablePath: executable, processArguments: [])
             }
             sessions = SessionManager(store: store, makeSession: shell, makeAgentSession: shell)
             var accessBox: () -> AgentAccess = { AgentAccess() }
             var unlockedBox: () -> Bool = { true }
+            var auditBox: (AgentAuditEntry) -> Void = { _ in }
             handler = AgentToolHandler(store: store, sessions: sessions,
                                        access: { accessBox() }, isUnlocked: { unlockedBox() },
                                        hasSavedPassword: { [vault] id in (try? vault.password(for: id)) != nil },
+                                       savedPassword: { [vault] id in try? vault.password(for: id) },
+                                       audit: { auditBox($0) },
                                        log: log)
+            auditBox = { [unowned self] in self.audit.append($0) }
             accessBox = { [unowned self] in self.access }
             unlockedBox = { [unowned self] in self.unlocked }
             access = AgentAccess(groups: [prod.id])
@@ -263,5 +268,62 @@ struct AgentToolsTests {
             let found = text.contains(secret)
             #expect(!found, "\(secret)")
         }
+    }
+
+    @Test
+    func typePasswordAnswersAPromptWithoutReturningTheSecret() async throws {
+        let fixture = try Fixture()
+        defer { fixture.tearDown() }
+        let id = try await fixture.open(fixture.web)
+        _ = await fixture.call("run", ["session_id": .string(id),
+                                       "command": "printf 'Password: '; read -r p; echo \"got:$p\"", "timeout_seconds": 1])
+        let reply = await fixture.call("type_password", ["session_id": .string(id)])
+        #expect(reply.error == nil, "\(reply.error ?? "")")
+        #expect(reply.result?["typed"] == true)
+        let leaked = (reply.result?.jsonText ?? "").contains("secret-Web")
+        #expect(!leaked)
+        var text = ""
+        let deadline = ContinuousClock.now + .seconds(8)
+        while !text.contains("got:\(AgentOutput.maskReplacement)"), ContinuousClock.now < deadline {
+            text = await fixture.call("read_output", ["session_id": .string(id), "wait_seconds": 1]).result?.string("output") ?? ""
+        }
+        #expect(text.contains("got:\(AgentOutput.maskReplacement)"))
+        #expect(!text.contains("secret-Web"))
+    }
+
+    @Test
+    func typePasswordNeedsAPromptAndAnOwnedSession() async throws {
+        let fixture = try Fixture()
+        defer { fixture.tearDown() }
+        let id = try await fixture.open(fixture.web)
+        let none = await fixture.call("type_password", ["session_id": .string(id)])
+        #expect(none.error?.contains("no password prompt") == true)
+        #expect(!(none.error ?? "").contains("secret-Web"))
+        #expect(await fixture.call("type_password", ["session_id": .string(id)], as: fixture.bob).error == "not found")
+        #expect(await fixture.call("type_password", ["session_id": .string(UUID().uuidString)]).error == "not found")
+    }
+
+    @Test
+    func theAuditRecordsWhatAgentsDidWithoutSecrets() async throws {
+        let fixture = try Fixture()
+        defer { fixture.tearDown() }
+        let id = try await fixture.open(fixture.web)
+        _ = await fixture.call("run", ["session_id": .string(id), "command": "echo hi; false"])
+        _ = await fixture.call("run", ["session_id": .string(id),
+                                       "command": "printf 'Password: '; read -r p", "timeout_seconds": 1])
+        _ = await fixture.call("type_password", ["session_id": .string(id)])
+        _ = await fixture.call("send_keys", ["session_id": .string(id), "keys": ["text:topsecret-literal", "enter", "ctrl-c"]])
+        _ = await fixture.call("close_session", ["session_id": .string(id)])
+        _ = await fixture.call("run", ["session_id": .string(UUID().uuidString), "command": "ignored"])
+
+        let entries = fixture.audit
+        #expect(entries.map(\.kind) == [.open, .run, .run, .password, .keys, .close])
+        #expect(entries.allSatisfy { $0.client == "Alice agent" && $0.hostName == "Web" })
+        #expect(entries[1].detail == "echo hi; false" && entries[1].exitCode == 1)
+        #expect(entries[3].detail == nil)
+        #expect(entries[4].detail == "text(17 chars), enter, ctrl-c")
+        let everything = entries.map { "\($0.detail ?? "")" }.joined()
+        let leaked = everything.contains("secret-Web") || everything.contains("topsecret-literal")
+        #expect(!leaked)
     }
 }

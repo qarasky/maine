@@ -37,12 +37,12 @@ struct AppStateTests {
     }
 
     @Test
-    func passwordIsRequiredAndSavingIsDisabledWhileLocked() {
+    func passwordIsOptionalAndSavingIsDisabledWhileLocked() {
         let state = AppState()
         let host = Host(name: "RPI", hostname: "raspberrypi.local")
         #expect(!state.canSaveHost(host, password: "test password"))
         state.vaultDidUnlock()
-        #expect(!state.canSaveHost(host, password: ""))
+        #expect(state.canSaveHost(host, password: ""))
         #expect(state.canSaveHost(host, password: "test password"))
         #expect(!state.canSaveHost(Host.blank, password: "test password"))
     }

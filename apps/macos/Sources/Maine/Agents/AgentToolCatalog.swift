@@ -7,7 +7,7 @@ struct AgentToolDefinition: Sendable {
     let inputSchema: JSONValue
 }
 
-/// The phase 1 tools (`docs/mcp.md` § Tools). The bridge advertises these;
+/// The tools (`docs/mcp.md` § Tools). The bridge advertises these;
 /// `AgentToolHandler` implements them in the app.
 enum AgentToolCatalog {
     private static let sessionID: JSONValue = ["type": "string", "description": "A session_id from open_session or list_sessions."]
@@ -57,6 +57,10 @@ enum AgentToolCatalog {
             inputSchema: schema(["session_id": sessionID,
                                  "keys": ["type": "array", "items": ["type": "string"], "minItems": 1]],
                                 required: ["session_id", "keys"])),
+        AgentToolDefinition(
+            name: "type_password",
+            description: "Types the host's saved password plus Enter into the session, only when the last screen line is a password prompt (sudo, ssh, su). The password is never returned and is masked in all later output. Returns {typed: true}.",
+            inputSchema: schema(["session_id": sessionID], required: ["session_id"])),
         AgentToolDefinition(
             name: "close_session",
             description: "Closes a session this client opened. Returns {closed: true}.",

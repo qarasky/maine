@@ -20,6 +20,8 @@ final class AgentCoordinator: ObservableObject {
     @Published private(set) var clients: [AgentClient] = []
     @Published private(set) var lastError: String?
     @Published private(set) var cachedAccess = AgentAccess()
+    /// What agents did, oldest first. Empty while the vault is locked.
+    @Published private(set) var auditEntries: [AgentAuditEntry] = []
 
     private let defaults: UserDefaults
     private let clientStore: AgentClientStore
@@ -48,12 +50,15 @@ final class AgentCoordinator: ObservableObject {
         guard first else { return }
         clients = (try? clientStore.clients()) ?? []
         refreshAccess()
+        refreshAudit()
         let passwords = passwords
         server = AgentServer(socketURL: socketURL, clients: clientStore, handler: AgentToolHandler(
             store: store, sessions: sessions,
             access: { [weak self] in self?.access() ?? AgentAccess() },
             isUnlocked: { [weak appState] in appState?.isVaultUnlocked ?? false },
-            hasSavedPassword: { (try? passwords.password(for: $0)) != nil }))
+            hasSavedPassword: { (try? passwords.password(for: $0)) != nil },
+            savedPassword: { try? passwords.password(for: $0) },
+            audit: { [weak self] in self?.recordAudit($0) }))
         if isEnabled { startServer() }
     }
 
@@ -128,6 +133,55 @@ final class AgentCoordinator: ObservableObject {
         }
     }
 
+    // MARK: - Hand to agent
+
+    /// Lets `clientID` drive a session the user opened. Needs the master
+    /// switch on, an unlocked vault and a host the rules allow, exactly like
+    /// every other way an agent reaches a host.
+    func handToAgent(sessionID: UUID, clientID: UUID) throws {
+        guard let client = clients.first(where: { $0.id == clientID }),
+              let session = sessions?.openSessions.first(where: { $0.id == sessionID }) else {
+            throw AgentHandOffError.notFound
+        }
+        guard mayReach(session), let host = store?.host(id: session.host.id) else { throw AgentHandOffError.notAllowed }
+        try sessions?.handToAgent(sessionID, client: client)
+        recordAudit(AgentAuditEntry(client: client.name, hostName: host.displayName, sessionID: sessionID, kind: .handoff))
+    }
+
+    /// Whether the menu may offer hand-off for this session.
+    func canHandOff(_ session: TerminalSession) -> Bool {
+        session.agent == nil && !clients.isEmpty && mayReach(session)
+    }
+
+    private func mayReach(_ session: TerminalSession) -> Bool {
+        guard isEnabled, appState?.isVaultUnlocked == true, let host = store?.host(id: session.host.id) else { return false }
+        return access().allows(host)
+    }
+
+    // MARK: - Audit
+
+    func recordAudit(_ entry: AgentAuditEntry) {
+        do {
+            try passwords.appendAgentAudit([entry])
+            refreshAudit()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func clearAudit() {
+        do {
+            try passwords.clearAgentAudit()
+            auditEntries = []
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    private func refreshAudit() {
+        auditEntries = (try? passwords.agentAudit()) ?? []
+    }
+
     private func refreshAccess() {
         cachedAccess = (try? passwords.agentAccess()) ?? AgentAccess()
     }
@@ -137,6 +191,7 @@ final class AgentCoordinator: ObservableObject {
     var activeCount: Int { sessions?.agentSessions.count ?? 0 }
 
     func vaultDidLock() {
+        auditEntries = []
         for session in sessions?.agentSessions ?? [] {
             guard let agent = session.agent, !agent.isPaused else { continue }
             agent.isPaused = true
@@ -146,6 +201,7 @@ final class AgentCoordinator: ObservableObject {
 
     func vaultDidUnlock() {
         refreshAccess()
+        refreshAudit()
         for session in sessions?.agentSessions ?? [] where pausedByLock.contains(session.id) {
             session.agent?.isPaused = false
         }

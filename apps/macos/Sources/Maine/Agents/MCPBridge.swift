@@ -61,7 +61,7 @@ final class MCPBridgeSession: @unchecked Sendable {
         case "initialize":
             let requested = params.string("protocolVersion") ?? ""
             let version = MCPBridge.supportedVersions.contains(requested) ? requested : MCPBridge.supportedVersions[0]
-            let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
+            let appVersion = AppVersion.current.description
             return Self.result(id: id, [
                 "protocolVersion": .string(version),
                 "capabilities": ["tools": ["listChanged": false]],

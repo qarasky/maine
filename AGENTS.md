@@ -12,7 +12,7 @@ maine/
 ├── apps/android/   Kotlin + Compose client: app/src/{main,test}, terminal/, tools/, README.md
 ├── apps/sync-server/ Rust sync server: src/, tests/, scripts/smoke.sh, README.md
 ├── packages/schema/ Versioned JSON config format + Python validator
-├── docs/           architecture.md, macos-design.md, sync-protocol.md, sync-client.md, images/
+├── docs/           architecture.md, macos-design.md, mcp.md, releasing.md, sync-protocol.md, sync-client.md, images/
 └── README.md
 ```
 
@@ -26,6 +26,8 @@ MAINE_UI_TESTS=1 swift test                  # also the window/layout tests — 
 MAINE_SYNC_SERVER_BIN="$PWD/../sync-server/target/release/maine-sync-server" \
     swift test --filter SyncServerIntegrationTests   # macOS client against the real server
 scripts/build-app.sh --release [--run]       # build/Maine.app, ad-hoc signed
+scripts/build-app.sh --release --version 1.2.3  # stamp the bundle's version (default 0.0.0-dev)
+scripts/make-dmg.sh 1.2.3                    # build/Maine-1.2.3.dmg and .dmg.sha256
 scripts/build-app.sh --debug [--run]         # debug configuration
 swift run Maine                               # debug executable directly
 build/Maine.app/Contents/MacOS/Maine --debug  # release build with debug logging
@@ -34,10 +36,12 @@ build/Maine.app/Contents/MacOS/Maine --debug  # release build with debug logging
 
 Tests run a real child process through a PTY and need a normal (non-headless) user session. **Agents: never run with `MAINE_UI_TESTS=1` locally** — those tests take over the user's screen while they work; CI runs them. Mark any new test that creates an `NSWindow` with `@Test(.uiTest)`. Xcode 16+ must be selected via `xcode-select`; Command Line Tools alone cannot compile the SwiftUI views.
 
+Releases are tag-driven: `git tag vX.Y.Z && git push origin vX.Y.Z` runs `.github/workflows/release.yml`, which validates the tag, tests, builds with `--version` and publishes `Maine-X.Y.Z.dmg` with its `.dmg.sha256`. A hyphen suffix (`v1.2.3-rc.1`) publishes a GitHub pre-release, which the updater ignores. Steps and the Gatekeeper first-launch caveat: `docs/releasing.md`.
+
 Run Android commands from `apps/android` (JDK 17+, Android SDK with platform 36; JVM unit tests need no emulator):
 
 ```sh
-./gradlew :app:testDebugUnitTest              # JVM unit tests (48 tests)
+./gradlew :app:testDebugUnitTest              # JVM unit tests (49 tests)
 ./gradlew :app:assembleDebug                  # debug APK
 swift tools/make-golden-vault.swift <password> app/src/test/resources/vault-golden-v2.json
 ```
@@ -55,15 +59,16 @@ cargo clippy --all-targets && cargo fmt --check
 
 | Area | Files | Role |
 | --- | --- | --- |
-| Entry, menus | `Sources/Maine/App/MaineApp.swift`, `App/AppState.swift`, `App/MenuBarController.swift` | Window state shared by menus and views; master-password gate on every launch; the resident status item that restores the window |
+| Entry, menus | `Sources/Maine/App/MaineApp.swift`, `App/AppState.swift`, `App/MenuBarController.swift` | Entry modes (app, askpass, `--mcp`); window state shared by menus and views; master-password gate on every launch; the resident status item that restores the window |
 | Hosts | `Sources/Maine/Models/Host*.swift` | Host model, validation, vault-backed store; `HostGroup` + `HostLayout` (groups, ordering, drag-and-drop rules; schema v2) |
-| Vault | `Sources/Maine/Services/PasswordStore.swift`, `LocalVaultKeyStore.swift` | Single active file `passwords.maine` (v2, AES-256-GCM + PBKDF2-SHA256); session snapshots in device-local `sessions-<vault id>.maine` under the same key; Keychain holds the session helper key and sync tokens (service `Maine Sync`) |
+| Vault | `Sources/Maine/Services/PasswordStore.swift`, `LocalVaultKeyStore.swift` | Single active file `passwords.maine` (v2, AES-256-GCM + PBKDF2-SHA256); session snapshots in device-local `sessions-<vault id>.maine` under the same key; Keychain holds this Mac's vault key (`app.maine.vault-key`), sync tokens (`Maine Sync`) and MCP client token hashes (`Maine Agents`) |
 | SSH | `Sources/Maine/Services/SSHTarget.swift`, `SSHConfigFile.swift`, `SSHAskPass.swift` | Builds the exact `ssh` command line; reads `~/.ssh/config`; supplies saved passwords |
 | Sessions | `Sources/Maine/Sessions/SessionManager.swift`, `TerminalSession.swift` | Open sessions keyed by session UUID; terminal NSView owned by the session, never reparented |
-| Agents (MCP) | `Sources/Maine/Agents/*.swift`, `Sessions/CapturingTerminalView.swift`, `Views/AgentSettingsView.swift` | `Maine --mcp` stdio bridge → 0600 Unix socket → `AgentServer` (Keychain-hashed client tokens) → `AgentToolHandler` → `AgentDriver` per session (completion marker, cleaned output); access rules device-local; spec `docs/mcp.md` |
+| Agents (MCP) | `Sources/Maine/Agents/*.swift`, `Sessions/CapturingTerminalView.swift` (every session's terminal view), `Views/AgentSettingsView.swift` | `Maine --mcp` stdio bridge → 0600 Unix socket → `AgentServer` (Keychain-hashed client tokens) → `AgentToolHandler` → `AgentDriver` per session (OSC 133, marker or quiet completion, cleaned output); hand-off for user sessions; encrypted device-local activity log; access rules device-local; spec `docs/mcp.md` |
 | Sync | `Sources/Maine/Sync/*.swift` | Profiles + Keychain tokens; whole-file create/join/pull/push with conflict copies; triggers (unlock pull, 2 s write debounce, 30 s HEAD poll, lock/quit flush); one active workspace, switching parks the outgoing vault |
+| Updates, releases | `Sources/Maine/Update/*.swift`, `Views/UpdateSettingsView.swift`, `scripts/make-dmg.sh`, `.github/workflows/release.yml` | `AppVersion` semver (single source of truth, `--version` into the bundle); GitHub latest-release GET → offer; DMG download, SHA-256 check, staged bundle swap by a detached helper; checks at unlock and every 2 h; tag-driven DMG releases (`docs/releasing.md`) |
 | Views | `Sources/Maine/Views/` | Sidebar-only navigation; `DesktopMetrics.swift` is the single spacing vocabulary |
-| Tests | `Tests/MaineTests/` | Geometry, lifecycle, encryption/migration, persistence regressions |
+| Tests | `Tests/MaineTests/` | Geometry, lifecycle, vault encryption/migration, sync, agents (tools, audit, OSC 133) and persistence regressions |
 
 Android (`apps/android`, Kotlin + Compose, minSdk 28):
 
@@ -90,23 +95,24 @@ Sync server (`apps/sync-server`, Rust + axum + embedded SQLite):
 ## Invariants — do not break these
 
 1. **Master password on every launch.** `prepareForLaunch()` always locks; password input is disabled while locked. There is no "remember me".
-2. **One active vault file.** `~/Library/Application Support/Maine/passwords.maine` holds hosts and credentials. Session snapshots (names + scrollback) live beside it in `sessions-<vault id>.maine`, sealed with the vault key and never synced; nothing writes sessions back into the vault payload. `hosts.json` is a legacy plaintext leftover — never read it as live storage, and tell users to archive/remove it after migration.
+2. **One active vault file.** `~/Library/Application Support/Maine/passwords.maine` holds hosts and credentials. Session snapshots (names + scrollback), collapsed groups, agent access rules and the agent activity log live beside it in `sessions-<vault id>.maine`, sealed with the vault key and never synced; nothing writes sessions back into the vault payload. `hosts.json` is a legacy plaintext leftover — never read it as live storage, and tell users to archive/remove it after migration.
 3. **Sessions are keyed by session UUID, not host UUID.** Restore reconnects automatically after unlock, with persisted history kept as scrollback (never replayed as commands).
 4. **Close vs quit.** Explicit close deletes the encrypted session record first (failure keeps the session visible). Quit only stops processes and keeps records.
 5. **Terminals stay mounted.** Switching sessions must never reparent a terminal NSView. Layout is bounded by the window viewport — terminal fitting size or banners must not grow the split view (this was a real shipped regression: exit-255 overflow).
 6. **Sidebar-only navigation.** No tab bar, no window title/toolbar, no All Hosts page. Entire sidebar rows are clickable; hover and selection share identical boundaries.
 7. **Ad-hoc signing only.** Provisioned signing / Touch ID was implemented, then deliberately rolled back (weekly re-signing burden). Do not reintroduce without asking. Never invent entitlements or pick a signing certificate silently.
-8. **Diagnostics are metadata-only and opt-in.** Never log passwords, keystrokes, hostnames, usernames, custom session names, terminal contents or screenshots. Debug regions (`.debugRegion`) record geometry only. The sync server obeys the same rule: request logs are method/path/status at debug level, never tokens, headers or bodies. Agent tool calls are logged the same way: tool name, session/client UUIDs, outcome, durations and byte counts — never commands, keys, output, screen text, host names, tokens or passwords.
+8. **Diagnostics are metadata-only and opt-in.** Never log passwords, keystrokes, hostnames, usernames, custom session names, terminal contents or screenshots to diagnostics. Debug regions (`.debugRegion`) record geometry only. The sync server obeys the same rule: request logs are method/path/status at debug level, never tokens, headers or bodies. Agent tool calls are logged the same way: tool name, session/client UUIDs, outcome, durations and byte counts — never commands, keys, output, screen text, host names, tokens or passwords. The separate encrypted agent activity log is user-facing: it records the commands agents ran, the host they ran on, key names and whether a saved password was typed, never passwords, output or the literal text sent with `send_keys` (only its length), and it never syncs or reaches diagnostics.
 9. **Motion respects the OS.** All transitions/press feedback check Reduce Motion.
 10. **Menu bar resident.** Closing the window hides it; the app must keep running (no terminate-after-last-window, no automatic termination) and the vault stays unlocked until Quit or an explicit lock. The Dock icon and the status item both restore the window (regular activation policy, no `LSUIElement`).
-11. **Sync is whole-file and opaque.** The synced object is `passwords.maine` byte for byte; tokens live in secure storage (never in the vault, never logged), the master password never leaves the device, and sync runs only while the vault is unlocked. Adopting a remote vault must keep a conflict copy of a dirty local file, close only sessions whose hosts are gone, and never reparent or restart a surviving terminal. Session snapshots never travel with the vault, and neither do agent access rules or MCP client tokens. Android does not implement the protocol yet.
-12. **Agent access is opt-in, scoped and local.** The MCP server is off by default and reachable only through `Maine --mcp` over a 0600 Unix socket with a revocable per-client token. Agents see only allowed groups/hosts (device-local rules in the encrypted local state file, never synced) and only sessions they opened. There are no approval modes: an allowed host is fully usable; agents' own harnesses gate commands. Saved passwords are typed into detected prompts, never returned; agent sessions are visible, pausable and ephemeral.
+11. **Sync is whole-file and opaque.** The synced object is `passwords.maine` byte for byte; tokens live in secure storage (never in the vault, never logged), the master password never leaves the device, and sync runs only while the vault is unlocked. Adopting a remote vault must keep a conflict copy of a dirty local file, close only sessions whose hosts are gone, and never reparent or restart a surviving terminal. Session snapshots never travel with the vault, and neither do collapsed groups, agent access rules, the agent activity log or MCP client tokens. Android does not implement the protocol yet.
+12. **Agent access is opt-in, scoped and local.** The MCP server is off by default and reachable only through `Maine --mcp` over a 0600 Unix socket with a revocable per-client token. Agents see only allowed groups/hosts (device-local rules in the encrypted local state file, never synced) and only sessions they opened or the user explicitly handed to them. There are no approval modes: an allowed host is fully usable; agents' own harnesses gate commands. Saved passwords are typed into detected prompts, never returned. Agent-created sessions are visible, pausable and ephemeral until the user keeps them; a session the user hands to an agent stays an ordinary saved session. Locking the vault pauses agent control.
+13. **The updater is the only automatic network call besides sync.** While the vault is unlocked, `UpdateCoordinator` makes one GET to `https://api.github.com/repos/qarasky/maine/releases/latest` at unlock and every 2 hours (7200 s), with a generic `User-Agent: Maine-Updater` and no identifiers, cookies or telemetry; no timer runs while locked. Settings → Updates turns it off (default on), and `0.0.0-dev` builds or anything not running from a `.app` bundle never check automatically. Integrity is HTTPS plus the SHA-256 published in the same release, not proof of authorship (Ed25519 was declined), and ad-hoc signing is unchanged (invariant 7). The skipped version and the toggle live in `UserDefaults` (`app.maine.update.*`), never in the vault and never synced; only outcomes and version numbers reach the logs (invariant 8).
 
 ## Working agreement
 
 - **Reproduce before fixing.** Write the failing regression test first (see `WorkspaceLifecycleTests.swift` for the pattern), then fix, then run the full suite.
 - **Verify by execution.** Run `swift test` after every behavior change; rebuild the release app when the user will retest it.
-- **Docs travel with behavior.** Update `README.md` and `docs/architecture.md` (plus `docs/macos-design.md` for layout changes) in the same change.
+- **Docs travel with behavior.** Update `README.md` and `docs/architecture.md` (plus `docs/macos-design.md` for layout changes and `docs/mcp.md` for agent behavior) in the same change.
 - **Icons are scripted.** `scripts/render-mark.swift` generates the active M monogram; `render-icon.swift` (prompt mark) is kept for future use. Rebuild `.icns` with `sips` + `iconutil` per the script headers; never commit ad-hoc binaries outside `Resources/`.
 - **Git hygiene.** `build/` and `.build/` are ignored — never force-add them. Commit only when asked; never push unless asked.
-- **Ask before expanding scope.** Pre-written commands, key management, hosted sync/accounts and new platforms are explicitly on hold / not planned. The self-hosted sync server, the macOS sync client and MCP agent access (phase 1 of `docs/mcp.md`) exist; Android sync is planned but not started.
+- **Ask before expanding scope.** Pre-written commands, key management, hosted sync/accounts and new platforms are explicitly on hold / not planned. The self-hosted sync server, the macOS sync client and MCP agent access (all three phases of `docs/mcp.md`) exist; Android sync is planned but not started.

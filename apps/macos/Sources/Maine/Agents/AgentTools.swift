@@ -14,13 +14,19 @@ final class AgentToolHandler: AgentCallHandling {
     private let access: @MainActor () -> AgentAccess
     private let isUnlocked: @MainActor () -> Bool
     private let hasSavedPassword: @MainActor (Host.ID) -> Bool
+    private let savedPassword: @MainActor (Host.ID) -> String?
+    private let audit: @MainActor (AgentAuditEntry) -> Void
     private let log: DebugLog
 
     init(store: HostStore, sessions: SessionManager,
          access: @escaping @MainActor () -> AgentAccess,
          isUnlocked: @escaping @MainActor () -> Bool,
          hasSavedPassword: @escaping @MainActor (Host.ID) -> Bool = { (try? PasswordStore.shared.password(for: $0)) != nil },
+         savedPassword: @escaping @MainActor (Host.ID) -> String? = { try? PasswordStore.shared.password(for: $0) },
+         audit: @escaping @MainActor (AgentAuditEntry) -> Void = { _ in },
          log: DebugLog = .shared) {
+        self.savedPassword = savedPassword
+        self.audit = audit
         self.log = log
         self.store = store
         self.sessions = sessions
@@ -82,7 +88,8 @@ final class AgentToolHandler: AgentCallHandling {
             let mine = sessions.openSessions.filter { $0.agent?.clientID == client.id && allowed($0) }
             return ["sessions": .array(mine.map { session in
                 ["session_id": .string(session.id.uuidString), "host_id": .string(session.host.id.uuidString),
-                 "name": .string(sessions.label(for: session)), "state": .string(session.state.label),
+                 "name": .string(sessions.label(for: session)), "state": .string(session.agent?.isReady == false && session.state.isLive
+                    ? TerminalSession.State.connecting.label : session.state.label),
                  "busy": .bool(session.agent?.isBusy ?? false)]
             })]
 
@@ -97,8 +104,17 @@ final class AgentToolHandler: AgentCallHandling {
                 sessions.endAgentControl(session.id)
                 throw ToolError(message: notice)
             }
-            return ["session_id": .string(session.id.uuidString), "state": .string(session.state.label),
-                    "output": .string(login.output)]
+            record(.open, session, client)
+            let ready = driver.isReady
+            var result: [String: JSONValue] = [
+                "session_id": .string(session.id.uuidString),
+                "state": .string(ready ? session.state.label : TerminalSession.State.connecting.label),
+                "ready": .bool(ready), "output": .string(login.output)]
+            if !ready {
+                result["hint"] = .string("The remote shell is not ready, so run is refused. Use read_screen; if ssh "
+                    + "waits at a password or host-key prompt, answer it with type_password or send_keys.")
+            }
+            return .object(result)
 
         case "run":
             let (session, driver) = try resolve(arguments, client: client)
@@ -115,6 +131,7 @@ final class AgentToolHandler: AgentCallHandling {
                 sessions.endAgentControl(session.id)
                 throw ToolError(message: Self.notFound)
             }
+            record(.run, session, client, detail: command, exitCode: result.exitCode)
             return ["completed": .bool(result.completed),
                     "exit_code": result.exitCode.map { .number(Double($0)) } ?? .null,
                     "output": .string(result.output), "cursor": .number(Double(result.cursor)),
@@ -134,7 +151,7 @@ final class AgentToolHandler: AgentCallHandling {
                     "cursor_col": .number(Double(screen.cursorCol)), "alternate_screen": .bool(screen.alternateScreen)]
 
         case "send_keys":
-            let (_, driver) = try resolve(arguments, client: client)
+            let (session, driver) = try resolve(arguments, client: client)
             let raw = (arguments.array("keys") ?? []).compactMap(\.stringValue)
             guard !raw.isEmpty else { throw ToolError(message: "keys is required") }
             var keys: [AgentKey] = []
@@ -143,16 +160,35 @@ final class AgentToolHandler: AgentCallHandling {
                 keys.append(key)
             }
             try await driver.send(keys: keys)
+            // Names only: literal text may itself be a secret the agent typed.
+            record(.keys, session, client, detail: raw.map { $0.hasPrefix("text:") ? "text(\($0.count - 5) chars)" : $0 }
+                .joined(separator: ", "))
             return ["sent": .number(Double(keys.count))]
+
+        case "type_password":
+            let (session, driver) = try resolve(arguments, client: client)
+            guard let password = savedPassword(session.host.id), !password.isEmpty else {
+                throw ToolError(message: "no saved password for this host")
+            }
+            try await driver.typePassword(password)
+            record(.password, session, client)
+            return ["typed": true]
 
         case "close_session":
             let (session, _) = try resolve(arguments, client: client)
+            record(.close, session, client)
             sessions.closeSession(session.id)
             return ["closed": true]
 
         default:
             throw ToolError(message: "unknown tool: \(call.tool)")
         }
+    }
+
+    private func record(_ kind: AgentAuditEntry.Kind, _ session: TerminalSession, _ client: AgentClient,
+                        detail: String? = nil, exitCode: Int32? = nil) {
+        audit(AgentAuditEntry(client: client.name, hostName: session.host.displayName, sessionID: session.id,
+                              kind: kind, detail: detail, exitCode: exitCode))
     }
 
     /// The caller's own session on a host it may still use, or `not found`.

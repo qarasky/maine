@@ -10,9 +10,11 @@ Android is not there yet.
   like a wallet seed: whoever holds it can read and replace the slot's bytes.
 - The server stores only `SHA-256(token)`, so a stolen database does not leak
   access.
-- Whole-file sync with optimistic concurrency: `If-Match` on every write,
-  `409` on a stale one. Clients keep a conflict copy; the server never merges.
-- The last 32 versions of each slot are kept for recovery and pruned on write.
+- Whole-file sync with optimistic concurrency: `If-Match` (or
+  `If-None-Match: *` for the first version of an empty slot) on writes, `409`
+  on a stale one. Clients keep a conflict copy; the server never merges.
+- The last 32 versions of each slot (configurable with `--keep-versions`) are
+  kept for recovery and pruned on write.
 
 The wire contract is [`docs/sync-protocol.md`](../../docs/sync-protocol.md);
 the client-side checklist is [`docs/sync-client.md`](../../docs/sync-client.md).
@@ -48,12 +50,14 @@ account to create, no email, no dashboard.
 | ---- | ----------- | ------- | ------- |
 | `--bind` | `MAINE_SYNC_BIND` | `127.0.0.1:8484` | Listen address. Loopback by default, so exposing the server is a decision, not an accident. |
 | `--data-dir` | `MAINE_SYNC_DATA_DIR` | `./data` | Directory for `sync.sqlite3`. |
-| `--keep-versions` | `MAINE_SYNC_KEEP_VERSIONS` | `32` | Stored versions per slot; older ones are pruned on write. |
-| `--max-blob` | `MAINE_SYNC_MAX_BLOB` | `64MiB` | Largest accepted vault. Accepts `B`, `KiB`, `MiB`, `GiB`. |
+| `--keep-versions` | `MAINE_SYNC_KEEP_VERSIONS` | `32` | Stored versions per slot (minimum 1); older ones are pruned on write. |
+| `--max-blob` | `MAINE_SYNC_MAX_BLOB` | `64MiB` | Largest accepted vault. Plain bytes or binary suffixes (`K`, `KiB`, `M`, `MiB`, `G`, `GiB`); decimal units like `MB` are rejected. |
 | `--create-secret` | `MAINE_SYNC_CREATE_SECRET` | unset | When set, creating slots requires the `X-Maine-Create-Secret` header. Existing slots are unaffected. |
 
 `RUST_LOG` controls logging (`info` by default). Request lines are logged at
 `debug`: method, path, status, duration — never headers, bodies or tokens.
+Slot lifecycle lines at `info` carry the version and size, or the internal
+slot id, never the token.
 
 ## Running it for real
 
@@ -93,6 +97,10 @@ docker build -t maine-sync-server .
 docker run -d -p 127.0.0.1:8484:8484 -v maine-sync:/data maine-sync-server
 ```
 
+The image listens on `0.0.0.0:8484` inside the container and keeps the
+database in `/data`; add `-e MAINE_SYNC_CREATE_SECRET=…` and publish only to
+loopback when the server is reachable by others.
+
 ## What the server can and cannot see
 
 | | |
@@ -109,18 +117,25 @@ a user who lost a token by reading the database directly:
 
 ```sh
 sqlite3 data/sync.sqlite3 \
+  "SELECT id, version, size FROM slots ORDER BY updated_at DESC"
+sqlite3 data/sync.sqlite3 \
   "SELECT version, length(blob) FROM versions ORDER BY version DESC"
+sqlite3 data/sync.sqlite3 \
+  "SELECT writefile('rescued.maine', blob) FROM versions
+   WHERE slot_id = 1 AND version = 3"
 ```
 
 ## Development
 
 ```sh
-cargo test          # unit + HTTP integration tests against a real server
-scripts/smoke.sh    # the protocol end to end with curl
+cargo test          # 26 tests: unit + HTTP integration against a real server
+scripts/smoke.sh    # the protocol end to end with curl (needs curl and python3)
 cargo clippy --all-targets
 cargo fmt
 ```
 
 The integration suite starts a real server on an ephemeral loopback port and
-exercises create, conditional pull, conflict, rotation, deletion, retention,
-oversized bodies, the create secret and a two-writer race.
+exercises health, create with and without a body, byte-for-byte pull, `HEAD`,
+conditional `304`, the `409`/`412`/`428` preconditions, token display forms,
+rotation, deletion, retention, oversized bodies, the create secret and a
+two-writer race.

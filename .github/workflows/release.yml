@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+# Only this workflow can write releases; everything else stays read-only.
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish the macOS DMG
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # build-app.sh derives CFBundleVersion from the commit count, so a
+          # shallow clone would publish build number 1.
+          fetch-depth: 0
+
+      - name: Validate the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "error: tag $TAG is not vX.Y.Z or vX.Y.Z-<suffix>" >&2
+            exit 1
+          fi
+
+      - name: Select the newest Xcode (SwiftUI macros need Xcode 16+)
+        run: |
+          XCODE="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "Using $XCODE"
+          sudo xcode-select --switch "$XCODE/Contents/Developer"
+          swift --version
+
+      - name: Test
+        env:
+          # Same reasoning as ci.yml: a crash without a stack is not diagnosable.
+          SWIFT_BACKTRACE: "enable=yes,symbolicate=yes"
+        run: swift test
+        working-directory: apps/macos
+
+      - name: Build Maine.app
+        run: scripts/build-app.sh --release --version "${GITHUB_REF_NAME#v}"
+        working-directory: apps/macos
+
+      - name: Package the DMG
+        run: scripts/make-dmg.sh "${GITHUB_REF_NAME#v}"
+        working-directory: apps/macos
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          args=(--generate-notes --title "Maine ${version}")
+          case "$TAG" in
+            *-*) args+=(--prerelease) ;;
+          esac
+          gh release create "$TAG" \
+            "apps/macos/build/Maine-${version}.dmg" \
+            "apps/macos/build/Maine-${version}.dmg.sha256" \
+            "${args[@]}"

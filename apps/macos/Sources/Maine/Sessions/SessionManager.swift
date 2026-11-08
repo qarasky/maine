@@ -35,7 +35,7 @@ public final class SessionManager: ObservableObject {
     private let makeAgentSession: (Host) -> TerminalSession
 
     public init(store: HostStore, makeSession: @escaping (Host) -> TerminalSession = { TerminalSession(host: $0) },
-                makeAgentSession: @escaping (Host) -> TerminalSession = { TerminalSession(host: $0, capturesOutput: true) }) {
+                makeAgentSession: @escaping (Host) -> TerminalSession = { TerminalSession(host: $0) }) {
         self.store = store
         self.makeSession = makeSession
         self.makeAgentSession = makeAgentSession
@@ -221,12 +221,30 @@ public final class SessionManager: ObservableObject {
         return session
     }
 
+    /// Hands a session the user opened to an MCP client. The session keeps
+    /// its terminal and stays an ordinary saved session; the agent sees only
+    /// output from now on. Refused unless the shell is at a prompt, because the
+    /// first `run` types into it.
+    @discardableResult
+    func handToAgent(_ sessionID: UUID, client: AgentClient) throws -> TerminalSession {
+        guard let session = openSessions.first(where: { $0.id == sessionID }) else { throw AgentHandOffError.notFound }
+        guard session.agent == nil else { throw AgentHandOffError.alreadyDriven }
+        guard session.state.isLive, session.isAtShellPrompt else { throw AgentHandOffError.notAtPrompt }
+        DebugLog.shared.record("manager.hand-off", fields: ["session": session.id.uuidString, "client": client.id.uuidString])
+        // A session an agent opened earlier stays ephemeral; the user's own does not.
+        session.isHandedOff = session.formerAgentName == nil
+        session.agent = AgentDriver(session: session, client: client)
+        return session
+    }
+
     /// Ends agent control of a session; it stays open, marked, until the
     /// user keeps or closes it.
     public func endAgentControl(_ sessionID: UUID) {
         guard let session = openSessions.first(where: { $0.id == sessionID }), let agent = session.agent else { return }
         agent.detach()
-        session.formerAgentName = agent.clientName
+        // A session the user handed over simply goes back to them.
+        session.formerAgentName = session.isHandedOff ? nil : agent.clientName
+        session.isHandedOff = false
         session.agent = nil
     }
 
@@ -239,6 +257,7 @@ public final class SessionManager: ObservableObject {
         guard let session = openSessions.first(where: { $0.id == sessionID }) else { return }
         session.agent?.detach()
         session.agent = nil
+        session.isHandedOff = false
         session.formerAgentName = nil
         checkpointAutomatically()
     }

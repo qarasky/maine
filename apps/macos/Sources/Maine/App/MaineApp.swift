@@ -45,6 +45,13 @@ struct MaineApp: App {
         .defaultSize(width: 1080, height: 720)
         .windowStyle(.hiddenTitleBar)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    Task { await UpdateCoordinator.shared.check(manual: true) }
+                }
+                // An offer needs the unlocked vault, so the check waits too.
+                .disabled(!appState.isVaultUnlocked)
+            }
             CommandGroup(after: .textEditing) {                Button("Search Hosts") { NotificationCenter.default.post(name: .maineFocusSearch, object: nil) }
                     .keyboardShortcut("f", modifiers: .command)
             }
@@ -128,6 +135,8 @@ struct MaineApp: App {
                     .tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
                 AgentSettingsView()
                     .tabItem { Label("Agents", systemImage: "cpu") }
+                UpdateSettingsView()
+                    .tabItem { Label("Updates", systemImage: "arrow.down.circle") }
             }
         }
     }
@@ -202,7 +211,7 @@ final class MaineAppDelegate: NSObject, NSApplicationDelegate {
             "format": "disconnect-diagnostics-v1",
             "executable": Bundle.main.executableURL?.path ?? CommandLine.arguments[0],
             "osVersion": ProcessInfo.processInfo.operatingSystemVersionString,
-            "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
+            "version": AppVersion.current.description
         ], flush: true)
     }
 
