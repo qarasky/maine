@@ -576,7 +576,12 @@ struct WorkspaceLifecycleTests {
             Issue.record("Missing root/header/terminal geometry", sourceLocation: sourceLocation)
             return
         }
-        #expect(root.insetBy(dx: -1, dy: -1).contains(header), sourceLocation: sourceLocation)
+        // The detail pane ignores the hidden title bar's safe area on purpose, so
+        // its header may start above `root` (at the window's top edge).
+        let rootToWindowTop = CGRect(x: root.minX, y: 0, width: root.width, height: root.maxY)
+        #expect(rootToWindowTop.insetBy(dx: -1, dy: -1).contains(header), sourceLocation: sourceLocation)
+        #expect(header.minY < 1, "the header starts at the window's top edge, not below an empty inset",
+                sourceLocation: sourceLocation)
         #expect(root.insetBy(dx: -1, dy: -1).contains(terminal), sourceLocation: sourceLocation)
         #expect(header.height > 20, sourceLocation: sourceLocation)
         #expect(terminal.height > 100, sourceLocation: sourceLocation)

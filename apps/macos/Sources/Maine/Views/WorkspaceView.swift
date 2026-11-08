@@ -37,10 +37,12 @@ struct WorkspaceView: View {
         // Animate visibility, not terminal identity or its AppKit parent.
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: sessions.selectedSessionID)
         .background(Color(NSColor.textBackgroundColor))
+        // Measured before the safe area is ignored, so the probe sees the same
+        // full-height frame the content lays out in.
+        .debugRegion("workspace")
         // The hidden title bar leaves a top safe-area inset; the traffic lights
         // sit over the sidebar, so the header must start at the window's edge
         // instead of being pushed down by it.
         .ignoresSafeArea(.container, edges: .top)
-        .debugRegion("workspace")
     }
 }

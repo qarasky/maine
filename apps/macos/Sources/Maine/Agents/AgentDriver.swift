@@ -210,7 +210,9 @@ public final class AgentDriver: ObservableObject {
     /// host-key prompt. Latches, so a long-running command never un-readies it.
     var isReady: Bool {
         if reachedShell { return true }
-        guard let session, session.state == .connected else { return false }
+        // `.connected` only follows a terminal layout pass, which a session whose
+        // window is hidden never gets; evidence in the output decides instead.
+        guard let session, session.state.isLive else { return false }
         if hasShellIntegration || session.isAtShellPrompt {
             reachedShell = true
         } else if output.cursor > 0, Date().timeIntervalSince(lastOutputAt) >= 1.5, !showsInputPrompt() {
@@ -237,7 +239,7 @@ public final class AgentDriver: ObservableObject {
         while ContinuousClock.now < deadline, let session, session.state.isLive {
             if isReady { break }
             // At a prompt: hand control back so the agent can answer it.
-            if session.state == .connected, output.cursor > 0,
+            if output.cursor > 0,
                Date().timeIntervalSince(lastOutputAt) >= 1.5, showsInputPrompt() { break }
             try? await Task.sleep(for: Self.poll)
         }
