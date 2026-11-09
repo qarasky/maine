@@ -19,6 +19,7 @@ struct HostListView: View {
     @State private var dropTarget: SidebarDropTarget?
     @FocusState private var renameFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openSettings) private var openSettings
 
     private var visibleHosts: [Host] {
         store.hosts.filter(matches)
@@ -52,7 +53,9 @@ struct HostListView: View {
             HostSearchField(text: $filter, focusRequest: searchFocusRequest)
                 .frame(height: 28)
                 .padding(.horizontal, DesktopMetrics.sidebarInset)
-                .padding(.top, 10)
+                // The hidden title bar's safe-area inset already clears the traffic
+                // lights; only a hairline of extra space belongs above the field.
+                .padding(.top, 2)
                 .padding(.bottom, 8)
                 .debugRegion("sidebar-search")
             if let failure = store.loadFailure {
@@ -739,6 +742,16 @@ struct HostListView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
+
+            Button {
+                openSettings()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 12))
+                    .frame(width: 24, height: 24)
+            }
+            .help("Settings")
+            .accessibilityLabel("Settings")
         }
         .padding(.horizontal, DesktopMetrics.sidebarInset)
         .frame(height: DesktopMetrics.footerHeight)

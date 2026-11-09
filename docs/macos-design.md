@@ -79,8 +79,10 @@ as a custom imitation: Maine supports macOS 14 and uses native system materials.
   per vault in the device-local state file, so they survive relaunch and never
   sync. Collapse and drop animations respect Reduce Motion.
 - The sidebar footer keeps the labeled New Host button, a New Group folder
-  button, the app version, and, while a sync profile is active, the sync status
-  dot with the profile name in its tooltip.
+  button, the app version with a gear button that opens Settings, and, while a
+  sync profile is active, the sync status dot with the profile name in its
+  tooltip. The search field sits just below the traffic lights; the hidden title
+  bar's safe-area inset provides that clearance, so it gets almost no padding.
 - Name and endpoint are the connection hierarchy. The full SSH command remains
   available in the endpoint's help tooltip; status uses a small icon and label,
   not a large bright capsule. Restored sessions reconnect on their own, so the
