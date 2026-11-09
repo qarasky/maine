@@ -66,7 +66,7 @@ final class MCPBridgeSession: @unchecked Sendable {
                 "protocolVersion": .string(version),
                 "capabilities": ["tools": ["listChanged": false]],
                 "serverInfo": ["name": "maine", "version": .string(appVersion)],
-                "instructions": "Maine runs real SSH sessions, on hosts the user allowed, in terminals the user can watch. Use run for commands (it returns output and the exit code), read_output for long-running commands, read_screen for full-screen programs and prompts, and send_keys to answer prompts or interrupt with ctrl-c.",
+                "instructions": "Maine runs real SSH sessions, on hosts the user allowed, in terminals the user can watch. Use run for commands (it returns output and the exit code), read_output for long-running commands, read_screen (optionally waiting for a change) for full-screen programs, prompts and multi-line progress, and send_keys to answer prompts or interrupt with ctrl-c.",
             ])
         case "ping":
             return Self.result(id: id, [:])

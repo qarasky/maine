@@ -146,9 +146,10 @@ final class AgentToolHandler: AgentCallHandling {
 
         case "read_screen":
             let (_, driver) = try resolve(arguments, client: client)
-            let screen = driver.screen()
+            let screen = await driver.readScreen(wait: Self.readWait(arguments.int("wait_seconds")))
             return ["rows": .array(screen.rows.map(JSONValue.string)), "cursor_row": .number(Double(screen.cursorRow)),
-                    "cursor_col": .number(Double(screen.cursorCol)), "alternate_screen": .bool(screen.alternateScreen)]
+                    "cursor_col": .number(Double(screen.cursorCol)), "alternate_screen": .bool(screen.alternateScreen),
+                    "changed": .bool(screen.changed), "busy": .bool(screen.busy)]
 
         case "send_keys":
             let (session, driver) = try resolve(arguments, client: client)

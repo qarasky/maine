@@ -49,8 +49,10 @@ enum AgentToolCatalog {
                                 required: ["session_id"])),
         AgentToolDefinition(
             name: "read_screen",
-            description: "Returns the visible terminal screen as text rows, with the cursor position and whether a full-screen program is active. Returns {rows, cursor_row, cursor_col, alternate_screen}.",
-            inputSchema: schema(["session_id": sessionID], required: ["session_id"])),
+            description: "Returns the visible terminal screen as text rows, with the cursor position and whether a full-screen program is active. Use it for full-screen programs, prompts and multi-line progress that redraws in place (docker, apt). With wait_seconds, waits until the screen differs from what the previous read_screen returned, or the command ends. Returns {rows, cursor_row, cursor_col, alternate_screen, changed, busy}.",
+            inputSchema: schema(["session_id": sessionID,
+                                 "wait_seconds": ["type": "integer", "minimum": 0, "maximum": 60, "default": 0]],
+                                required: ["session_id"])),
         AgentToolDefinition(
             name: "send_keys",
             description: "Sends keys to the session: named keys (enter, tab, esc, backspace, up, down, left, right, ctrl-a … ctrl-z) or literal text as \"text:<literal>\". Returns {sent}.",

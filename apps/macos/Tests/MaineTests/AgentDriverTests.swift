@@ -64,6 +64,23 @@ struct AgentDriverTests {
         #expect(!driver.isBusy)
     }
 
+    /// A progress bar redrawn behind `\r` is new output: a waiting read wakes
+    /// for it and returns the redrawn line, not an empty result.
+    @Test
+    func aWaitingReadWakesForAnInPlaceRedraw() async throws {
+        let (session, driver) = await drivenShell()
+        defer { endShell(session) }
+        let result = try await driver.run("printf '\\r[##  ] 20%%'; sleep 1; printf '\\r[####] 90%%'; sleep 4",
+                                          timeout: .milliseconds(500))
+        #expect(!result.completed)
+        let started = ContinuousClock.now
+        let read = await driver.readOutput(since: result.cursor, wait: .seconds(10), maxBytes: 65_536)
+        #expect(ContinuousClock.now - started < .seconds(3))
+        #expect(read.output.contains("[####] 90%"))
+        #expect(read.cursor > result.cursor)
+        #expect(read.busy)
+    }
+
     /// A session whose process prints `script` output like ssh would, then
     /// stands in for the remote shell (or stalls at a prompt).
     private func scriptedSession(_ script: String) -> (TerminalSession, AgentDriver) {
@@ -162,6 +179,34 @@ struct AgentDriverTests {
         #expect(screen.rows.contains { $0.contains("row-a") })
         #expect(!screen.alternateScreen)
         #expect(screen.cursorRow >= 0 && screen.cursorCol >= 0)
+    }
+
+    /// Multi-line progress redrawn with cursor-up only reads right on the
+    /// screen; a waiting `read_screen` wakes when the screen differs from what
+    /// it last returned, and otherwise waits out the time without a change.
+    @Test
+    func aWaitingScreenReadWakesWhenTheScreenChanges() async throws {
+        let (session, driver) = await drivenShell()
+        defer { endShell(session) }
+        #expect(await driver.readScreen(wait: nil).changed) // a first read is always news
+        var started = ContinuousClock.now
+        let idle = await driver.readScreen(wait: .seconds(1))
+        #expect(!idle.changed)
+        #expect(ContinuousClock.now - started >= .seconds(1))
+        #expect(!idle.busy)
+
+        _ = try await driver.run("printf 'a 10%%\\nb 10%%\\n'; sleep 1; printf '\\033[2Aa 90%%\\nb 90%%\\n'; sleep 4",
+                                 timeout: .milliseconds(500))
+        let before = await driver.readScreen(wait: nil)
+        #expect(before.rows.contains { $0.trimmingCharacters(in: .whitespaces) == "a 10%" })
+        started = ContinuousClock.now
+        let next = await driver.readScreen(wait: .seconds(10))
+        #expect(ContinuousClock.now - started < .seconds(3))
+        #expect(next.changed)
+        #expect(next.busy)
+        let rows = next.rows.map { $0.trimmingCharacters(in: .whitespaces) }
+        #expect(rows.contains("a 90%") && rows.contains("b 90%"))
+        #expect(!rows.contains("a 10%")) // redrawn in place, not appended
     }
 
     @Test

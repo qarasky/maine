@@ -2,12 +2,19 @@ import Foundation
 
 /// The plain-text view of an agent session's output: PTY bytes with escape
 /// sequences stripped, `\r` and backspace applied to the current line, kept in
-/// a bounded ring. Agents read it by cursor, an offset into the cleaned
-/// stream. The bytes the terminal renders are untouched; this is a copy.
+/// a bounded ring. The bytes the terminal renders are untouched; this is a copy.
 ///
 /// The current, unfinished line is readable (prompts have no newline) and can
 /// still be rewritten by `\r` until it ends. Masks (saved passwords that were
 /// typed) are replaced when a line is rendered; passwords never span lines.
+///
+/// Agents read by cursor, a position in the stream that only ever grows, and
+/// grows whenever the text changes. For plain output it is the cleaned byte
+/// count. A line redrawn in place (a progress bar or spinner behind `\r`) does
+/// not get longer, so every change to it also advances the cursor: otherwise a
+/// reader waiting for new output would see none, and a narrower redraw would
+/// move the cursor backwards. Such a line therefore spans more cursor positions
+/// than bytes; `anchors` record where cursor and byte offset diverge.
 struct AgentOutput: Sendable {
     static let maskReplacement = "••••••"
     static let maxLineLength = 65_536
@@ -17,14 +24,29 @@ struct AgentOutput: Sendable {
     var masks: [String] = []
     private(set) var isAlternateScreen = false
 
+    /// Committed lines; `ringStart` is the byte offset of its first byte.
     private var ring: [UInt8] = []
     private var ringStart = 0
+    /// Cursor at the end of the committed lines (where the current line starts).
+    private var committedCursor = 0
+    /// Cursor positions the current line has used: grows by the bytes of every
+    /// scalar that changes it, so it never shrinks while the line is open.
+    private var lineSpan = 0
+    /// Cursor ↔ byte offset pairs, ascending. From each anchor on, both advance
+    /// together until the next one. Every committed line that spanned more
+    /// positions than bytes adds one at its end.
+    private var anchors: [Anchor] = [Anchor(offset: 0, cursor: 0)]
     private var line: [Unicode.Scalar] = []
     private var column = 0
     private var parser = Parser.ground
     private var pendingUTF8: [UInt8] = []
     private var expectedUTF8 = 0
     private var csiParameters: [UInt8] = []
+
+    private struct Anchor: Sendable {
+        var offset: Int
+        var cursor: Int
+    }
 
     private enum Parser: Sendable {
         case ground, escape, escapeIntermediate, csi, osc, oscEscape, string, stringEscape
@@ -34,8 +56,8 @@ struct AgentOutput: Sendable {
         self.capacity = capacity
     }
 
-    /// Total cleaned bytes produced so far, including the current line.
-    var cursor: Int { ringStart + ring.count + renderedLine.utf8.count }
+    /// The current end of the stream, including the current line.
+    var cursor: Int { committedCursor + max(lineSpan, renderedLine.utf8.count) }
 
     mutating func append(_ bytes: ArraySlice<UInt8>) {
         for byte in bytes { consume(byte) }
@@ -43,29 +65,65 @@ struct AgentOutput: Sendable {
     }
 
     /// Output after `since`. A cursor older than the ring starts at the ring
-    /// and reports `truncated`; long results are cut in the middle.
+    /// and reports `truncated`; long results are cut in the middle. A cursor
+    /// inside a line delivers that whole line again: `\r` may have rewritten it.
     func text(since: Int, upTo limit: Int? = nil, maxBytes: Int = 65_536) -> (text: String, cursor: Int, truncated: Bool) {
-        var all = ring + Array(renderedLine.utf8)
-        if let limit, limit - ringStart < all.count {
-            var cut = max(0, limit - ringStart)
+        let rendered = renderedLine
+        let streamEnd = committedCursor + max(lineSpan, rendered.utf8.count)
+        let stop = min(limit ?? streamEnd, streamEnd)
+        guard since < stop else { return ("", stop, false) }
+        var all = ring + Array(rendered.utf8)
+        if stop < streamEnd {
+            var cut = min(max(0, offset(of: stop, lineBytes: rendered.utf8.count) - ringStart), all.count)
             while cut < all.count, all[cut] & 0xC0 == 0x80 { cut += 1 }
             all = Array(all[..<cut])
         }
-        let end = ringStart + all.count
         var truncated = false
-        var start = since
-        if start < ringStart { start = ringStart; truncated = true }
-        start = min(start, end)
-        var offset = start - ringStart
-        // A cursor handed out mid-line may point into text that `\r` later
-        // rewrote: deliver that whole line again instead of a garbled tail.
-        if offset < all.count {
-            while offset > 0, all[offset - 1] != 0x0A { offset -= 1 }
+        var start: Int
+        if since < cursor(atOffset: ringStart) {
+            start = 0
+            truncated = true
+        } else if since >= committedCursor {
+            start = ring.count // the current line
+        } else {
+            start = offset(of: since, lineBytes: rendered.utf8.count) - ringStart
         }
-        while offset < all.count, all[offset] & 0xC0 == 0x80 { offset += 1 }
-        let text = String(decoding: all[offset...], as: UTF8.self)
+        start = min(start, all.count)
+        if start < all.count {
+            while start > 0, all[start - 1] != 0x0A { start -= 1 }
+        }
+        while start < all.count, all[start] & 0xC0 == 0x80 { start += 1 }
+        let text = String(decoding: all[start...], as: UTF8.self)
         let (cut, didCut) = Self.middleTruncated(text, maxBytes: maxBytes)
-        return (cut, end, truncated || didCut)
+        return (cut, stop, truncated || didCut)
+    }
+
+    /// The byte offset for `cursor`. Inside a line that spans more positions
+    /// than bytes it lands within that line, never in a later one.
+    private func offset(of cursor: Int, lineBytes: Int) -> Int {
+        if cursor >= committedCursor {
+            return ringStart + ring.count + min(cursor - committedCursor, lineBytes)
+        }
+        let index = lastAnchor { $0.cursor <= cursor }
+        var offset = anchors[index].offset + (cursor - anchors[index].cursor)
+        if index + 1 < anchors.count { offset = min(offset, anchors[index + 1].offset - 1) }
+        return offset
+    }
+
+    private func cursor(atOffset offset: Int) -> Int {
+        let index = lastAnchor { $0.offset <= offset }
+        return anchors[index].cursor + (offset - anchors[index].offset)
+    }
+
+    /// The last anchor matching `isAtOrBefore` (a prefix of `anchors`); the first always does.
+    private func lastAnchor(_ isAtOrBefore: (Anchor) -> Bool) -> Int {
+        var low = 0
+        var high = anchors.count - 1
+        while low < high {
+            let middle = (low + high + 1) / 2
+            if isAtOrBefore(anchors[middle]) { low = middle } else { high = middle - 1 }
+        }
+        return low
     }
 
     static func middleTruncated(_ text: String, maxBytes: Int) -> (String, Bool) {
@@ -164,14 +222,30 @@ struct AgentOutput: Sendable {
         // Output without newlines (minified files, base64) must stay bounded:
         // a full line is committed as if it had wrapped.
         if column >= Self.maxLineLength { commitLine() }
-        if column < line.count { line[column] = scalar } else { line.append(scalar) }
+        if column < line.count {
+            // Reprinting the same text (a shell redrawing its prompt) is no change.
+            if line[column] != scalar {
+                line[column] = scalar
+                lineSpan += UTF8.width(scalar)
+            }
+        } else {
+            line.append(scalar)
+            lineSpan += UTF8.width(scalar)
+        }
         column += 1
     }
 
     private mutating func commitLine() {
-        ring.append(contentsOf: Array((renderedLine + "\n").utf8))
+        let bytes = Array((renderedLine + "\n").utf8)
+        let span = max(lineSpan, bytes.count - 1) + 1
+        ring.append(contentsOf: bytes)
+        committedCursor += span
+        if span != bytes.count {
+            anchors.append(Anchor(offset: ringStart + ring.count, cursor: committedCursor))
+        }
         line = []
         column = 0
+        lineSpan = 0
     }
 
     private mutating func finishCSI(final: UInt8) {
@@ -189,5 +263,7 @@ struct AgentOutput: Sendable {
         while drop < ring.count, ring[drop] & 0xC0 == 0x80 { drop += 1 }
         ring.removeFirst(drop)
         ringStart += drop
+        // Keep the anchor that still governs the ring's first byte.
+        while anchors.count > 1, anchors[1].offset <= ringStart { anchors.removeFirst() }
     }
 }

@@ -192,7 +192,7 @@ tool name is a JSON-RPC error (`-32602`). Ids are UUID strings.
 | `open_session` | `host_id`, `name?` | `{session_id, state, ready, output, hint?}`. Opens a new session (never reuses one) and waits up to 30 s for the remote shell to be ready (a shell prompt, or 1.5 s quiet at no question), failure, or ssh stopping at a password/host-key prompt. `ready: false` means `run` is refused (`ssh is still connecting…`) until the shell is up; `read_screen`, `type_password` and `send_keys` still work to answer the prompt. `list_sessions` shows such a session as `Connecting…`. |
 | `run` | `session_id`, `command`, `timeout_seconds?` (1–600, default 60) | `{completed, exit_code, output, cursor, truncated, mode}`. See *Command completion*. If not completed in time: `completed: false`, partial output; the command keeps running. |
 | `read_output` | `session_id`, `since?` (cursor, default 0 = everything retained), `wait_seconds?` (0–60, default 0), `max_bytes?` (1–65536, default 65536) | `{output, cursor, busy, truncated}`. New output since `since`; with `wait_seconds`, waits for new output or completion. |
-| `read_screen` | `session_id` | `{rows: [String], cursor_row, cursor_col, alternate_screen}` — the visible screen as text, for TUIs and prompts. |
+| `read_screen` | `session_id`, `wait_seconds?` (0–60, default 0) | `{rows: [String], cursor_row, cursor_col, alternate_screen, changed, busy}` — the visible screen as text, for TUIs, prompts and multi-line progress that redraws in place. With `wait_seconds`, waits until the screen differs from what this agent's previous `read_screen` returned, the command ends, or time runs out; `changed` says whether it differs (always true on the first read). |
 | `send_keys` | `session_id`, `keys: [String]` (at least one) | `{sent}`, the number of keys sent. Each item is a named key (`enter`, `tab`, `esc`, `backspace`, `up`, `down`, `left`, `right`, `ctrl-a`…`ctrl-z`) or `text:<literal>`. |
 | `type_password` | `session_id` | `{typed: true}` or an error explaining why not. See *Saved password*. |
 | `close_session` | `session_id` | `{closed: true}` — same as the user's explicit close. |
@@ -265,13 +265,23 @@ The hard problem: knowing a command finished and what its exit code was.
   its terminal view.
 * Cleaning for the agent: strip CSI/OSC/DCS (and APC/PM/SOS) sequences, apply
   `\r`-overwrite and backspace on the current line, keep tabs, drop NULs,
-  normalize to `\n`. The **cursor** is a byte offset into the cleaned stream.
-  The current, unfinished line is readable, so prompts are visible. A line is
+  normalize to `\n`. The **cursor** is a position in the cleaned stream that
+  only grows, and grows on every change: for plain output it is the byte
+  count, and a line redrawn in place behind `\r` (progress bars, spinners)
+  advances it on each redraw that changes the text, so `read_output` with
+  `wait_seconds` wakes for it and a narrower redraw never moves it backwards.
+  A `since` inside a line returns that whole line again. The current, unfinished line is readable, so prompts are visible. A line is
   capped at 64 KiB. Saved-password masks are applied when a line is rendered,
   so a password never appears in the buffer.
 * `read_screen` reads SwiftTerm's visible buffer instead, for full-screen
   programs (`alternate_screen: true` when the terminal is in the alternate
   screen, tracked from `CSI ?1049/1047/47 h/l`). Masks apply to these rows too.
+  It is also the right read for multi-line progress that moves the cursor up
+  (`docker compose pull`, `apt`): the cleaned stream ignores cursor movement,
+  so those redraws arrive there as repeated lines. A waiting `read_screen`
+  re-renders the rows only when PTY output arrived, and compares them (plus
+  cursor and alternate-screen state) with what it last returned. It holds
+  only the visible rows; history is `read_output`.
 
 ## Saved password (`type_password`)
 
@@ -452,7 +462,10 @@ The suite is `Tests/MaineTests/`:
   across chunks, wrong nonce ignored, echoed wrapper never matches, exit codes,
   quiet-period fallback, OSC 133 marks.
 * Output cleaning (`AgentOutputTests`): ANSI stripping, `\r`/backspace
-  handling, 64 KiB middle truncation, cursors, masking across chunks.
+  handling, 64 KiB middle truncation, cursors (monotonic across in-place
+  redraws and ring trimming), masking across chunks; `AgentDriverTests`
+  checks a waiting `read_output` wakes for a redraw, and a waiting
+  `read_screen` wakes for a cursor-up redraw and otherwise reports no change.
 * Password (`AgentDriverTests`, `AgentToolsTests`, `CommandCompletionTests`):
   prompt detection (sudo/plain/passphrase/MFA cases), masking, refusal paths.
 * Activity log (`AgentAuditTests`): entry kinds, command truncation, the 1000

@@ -117,4 +117,78 @@ struct AgentOutputTests {
         output.append(ArraySlice(Array("next\n".utf8)))
         #expect(output.text(since: end).text == "next\n")
     }
+
+    // MARK: - In-place redraws (progress bars, spinners)
+
+    @Test
+    func aSameWidthRedrawAdvancesTheCursorAndIsReadable() {
+        var output = AgentOutput()
+        output.append(ArraySlice(Array("$ job\n\r[##        ] 20%".utf8)))
+        let first = output.text(since: 0)
+        output.append(ArraySlice(Array("\r[#####     ] 50%".utf8)))
+        let next = output.text(since: first.cursor)
+        #expect(next.cursor > first.cursor)
+        #expect(next.text == "[#####     ] 50%")
+        // Nothing changed since: nothing new, cursor stays.
+        #expect(output.text(since: next.cursor).text.isEmpty)
+        #expect(output.text(since: next.cursor).cursor == next.cursor)
+    }
+
+    @Test
+    func aRedrawThatPrintsTheSameTextIsNotNewOutput() {
+        var output = AgentOutput()
+        output.append(ArraySlice(Array("user@box:~$ ".utf8)))
+        let cursor = output.cursor
+        output.append(ArraySlice(Array("\ruser@box:~$ ".utf8)))
+        #expect(output.cursor == cursor)
+    }
+
+    @Test
+    func aNarrowerRedrawNeverMovesTheCursorBack() {
+        var output = AgentOutput()
+        output.append(ArraySlice(Array("\r━━━━━━━━ 80%".utf8)))
+        let before = output.cursor
+        output.append(ArraySlice(Array("\rdone 100%   ".utf8)))
+        let read = output.text(since: before)
+        #expect(read.cursor > before)
+        #expect(read.text == "done 100%   ")
+    }
+
+    @Test
+    func linesAfterARedrawnLineAreNotSkipped() {
+        var output = AgentOutput()
+        output.append(ArraySlice(Array("━━━━━━━━━━━━━━━━ 10%".utf8)))
+        let held = output.cursor
+        output.append(ArraySlice(Array("\rok\u{1B}[K\na\nb\nc\nd\n".utf8)))
+        let read = output.text(since: held)
+        #expect(read.text.hasSuffix("a\nb\nc\nd\n"))
+        #expect(read.cursor > held)
+        #expect(output.text(since: read.cursor).text.isEmpty)
+    }
+
+    @Test
+    func cursorsStayMonotonicAcrossManyRedrawsAndTrimming() {
+        var output = AgentOutput(capacity: 256)
+        var last = output.cursor
+        for step in 0..<2_000 {
+            output.append(ArraySlice(Array("\r━━ \(step % 100)%".utf8)))
+            if step % 10 == 9 { output.append(ArraySlice(Array("\nline \(step)\n".utf8))) }
+            #expect(output.cursor >= last)
+            last = output.cursor
+        }
+        let tail = output.text(since: 0)
+        #expect(tail.truncated)
+        #expect(tail.cursor == output.cursor)
+        #expect(tail.text.hasSuffix("━━ 99%\nline 1999\n"))
+        #expect(output.text(since: tail.cursor).text.isEmpty)
+    }
+
+    @Test
+    func aLimitInsideTheCurrentLineCutsAtTheLimit() {
+        var output = AgentOutput()
+        output.append(ArraySlice(Array("out\nab".utf8)))
+        let limit = output.cursor
+        output.append(ArraySlice(Array("cd\n".utf8)))
+        #expect(output.text(since: 0, upTo: limit).text == "out\nab")
+    }
 }

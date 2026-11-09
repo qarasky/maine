@@ -140,6 +140,10 @@ struct AgentToolsTests {
 
         let screen = await fixture.call("read_screen", ["session_id": .string(id)])
         #expect(screen.result?.array("rows")?.contains { $0.stringValue?.contains("hi") == true } == true)
+        #expect(screen.result?["changed"] == true)
+        #expect(screen.result?["busy"] == false)
+        let unchanged = await fixture.call("read_screen", ["session_id": .string(id), "wait_seconds": 1])
+        #expect(unchanged.result?["changed"] == false)
         let read = await fixture.call("read_output", ["session_id": .string(id)])
         #expect(read.result?.string("output")?.contains("hi") == true)
         #expect(await fixture.call("send_keys", ["session_id": .string(id), "keys": ["text:echo typed", "enter"]]).result?.int("sent") == 2)

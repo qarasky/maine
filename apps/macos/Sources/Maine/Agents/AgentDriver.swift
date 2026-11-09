@@ -101,6 +101,14 @@ public final class AgentDriver: ObservableObject {
         var cursorRow: Int
         var cursorCol: Int
         var alternateScreen: Bool
+        /// Differs from what the previous `read_screen` returned (always true for the first).
+        var changed = true
+        var busy = false
+
+        func showsSame(as other: ScreenResult) -> Bool {
+            rows == other.rows && cursorRow == other.cursorRow && cursorCol == other.cursorCol
+                && alternateScreen == other.alternateScreen
+        }
     }
 
     private enum Mode: String { case unknown, marker, quiet, osc133 }
@@ -130,6 +138,10 @@ public final class AgentDriver: ObservableObject {
     private var mode = Mode.unknown
     private var pending: PendingRun?
     private var lastOutputAt = Date.distantPast
+    /// Bumped by every PTY chunk; a waiting screen read re-renders only then.
+    private var outputRevision = 0
+    /// What the last `read_screen` returned, so the next one can wait for a change.
+    private var lastScreen: ScreenResult?
     private var shellMarks = OSC133Detector()
     /// The remote shell emitted `OSC 133;A` itself, so it has shell integration.
     private var hasShellIntegration = false
@@ -148,6 +160,7 @@ public final class AgentDriver: ObservableObject {
     /// Bytes from the PTY, before the terminal renders them.
     func ingest(_ bytes: ArraySlice<UInt8>) {
         lastOutputAt = Date()
+        outputRevision &+= 1
         let marks = shellMarks.scan(bytes)
         if marks.contains(where: { $0.mark == .promptStart }) { hasShellIntegration = true }
         if mode == .osc133, !marks.isEmpty {
@@ -321,6 +334,33 @@ public final class AgentDriver: ObservableObject {
         }
         return ScreenResult(rows: rows, cursorRow: screen.cursorRow, cursorCol: screen.cursorCol,
                             alternateScreen: output.isAlternateScreen)
+    }
+
+    /// `read_screen`: the screen now, or with `wait`, once it differs from
+    /// what the previous read returned (or the command ends, or time runs out).
+    /// Multi-line progress that moves the cursor up only reads right here.
+    func readScreen(wait: Duration?) async -> ScreenResult {
+        // Let queued PTY output reach the terminal first, as `readOutput` does.
+        await Task.yield()
+        var current = screen()
+        if let wait, let last = lastScreen, current.showsSame(as: last) {
+            let deadline = ContinuousClock.now + wait
+            let wasBusy = isBusy
+            var seen = outputRevision
+            while ContinuousClock.now < deadline {
+                try? await Task.sleep(for: Self.poll)
+                refreshCompletion()
+                if (wasBusy && !isBusy) || session?.state.isLive != true || isDetached { break }
+                guard outputRevision != seen else { continue }
+                seen = outputRevision
+                if !screen().showsSame(as: last) { break }
+            }
+            current = screen()
+        }
+        current.changed = lastScreen.map { !current.showsSame(as: $0) } ?? true
+        current.busy = isBusy
+        lastScreen = current
+        return current
     }
 
     func send(keys: [AgentKey]) async throws {
