@@ -12,7 +12,7 @@ maine/
 ├── apps/android/   Kotlin + Compose client: app/src/{main,test}, terminal/, tools/, README.md
 ├── apps/sync-server/ Rust sync server: src/, tests/, scripts/smoke.sh, README.md
 ├── packages/schema/ Versioned JSON config format + Python validator
-├── docs/           architecture.md, macos-design.md, mcp.md, releasing.md, sync-protocol.md, sync-client.md, images/
+├── docs/           guide.md, development.md, architecture.md, macos-design.md, mcp.md, releasing.md, sync-protocol.md, sync-client.md, images/
 └── README.md
 ```
 
@@ -112,7 +112,7 @@ Sync server (`apps/sync-server`, Rust + axum + embedded SQLite):
 
 - **Reproduce before fixing.** Write the failing regression test first (see `WorkspaceLifecycleTests.swift` for the pattern), then fix, then run the full suite.
 - **Verify by execution.** Run `swift test` after every behavior change; rebuild the release app when the user will retest it.
-- **Docs travel with behavior.** Update `README.md` and `docs/architecture.md` (plus `docs/macos-design.md` for layout changes and `docs/mcp.md` for agent behavior) in the same change.
+- **Docs travel with behavior.** `README.md` is a short overview; user-facing detail lives in `docs/guide.md` and build/test detail in `docs/development.md`. Update those and `docs/architecture.md` (plus `docs/macos-design.md` for layout changes and `docs/mcp.md` for agent behavior) in the same change.
 - **Icons are scripted.** `scripts/render-mark.swift` generates the active M monogram; `render-icon.swift` (prompt mark) is kept for future use. Rebuild `.icns` with `sips` + `iconutil` per the script headers; never commit ad-hoc binaries outside `Resources/`.
 - **Git hygiene.** `build/` and `.build/` are ignored — never force-add them. Commit only when asked; never push unless asked.
 - **Ask before expanding scope.** Pre-written commands, key management, hosted sync/accounts and new platforms are explicitly on hold / not planned. The self-hosted sync server, the macOS sync client and MCP agent access (all three phases of `docs/mcp.md`) exist; Android sync is planned but not started.
