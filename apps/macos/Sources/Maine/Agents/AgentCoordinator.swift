@@ -13,6 +13,8 @@ final class AgentCoordinator: ObservableObject {
         let client: AgentClient
         let token: String
         let claudeCodeCommand: String
+        let codexCommand: String
+        let openCodeCommand: String
         let desktopJSON: String
     }
 
@@ -91,14 +93,18 @@ final class AgentCoordinator: ObservableObject {
         let (client, token) = try clientStore.add(name: trimmed.isEmpty ? "MCP client" : trimmed)
         clients = (try? clientStore.clients()) ?? clients + [client]
         let executable = Bundle.main.executableURL?.path ?? CommandLine.arguments[0]
-        let command = "claude mcp add maine --env MAINE_AGENT_TOKEN=\(token) -- \"\(executable)\" --mcp"
+        // Claude Code, Codex and OpenCode share one CLI shape: `<cli> mcp add NAME --env K=V -- CMD ARGS`.
+        let tail = " maine --env MAINE_AGENT_TOKEN=\(token) -- \"\(executable)\" --mcp"
+        let command = "claude mcp add" + tail
         let desktop: JSONValue = ["mcpServers": ["maine": [
             "command": .string(executable), "args": ["--mcp"], "env": ["MAINE_AGENT_TOKEN": .string(token)],
         ]]]
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let json = (try? String(decoding: encoder.encode(desktop), as: UTF8.self)) ?? desktop.jsonText
-        return Pairing(client: client, token: token, claudeCodeCommand: command, desktopJSON: json)
+        return Pairing(client: client, token: token, claudeCodeCommand: command,
+                       codexCommand: "codex mcp add" + tail, openCodeCommand: "opencode mcp add" + tail,
+                       desktopJSON: json)
     }
 
     func revoke(_ id: UUID) {

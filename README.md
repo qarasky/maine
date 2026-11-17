@@ -36,7 +36,7 @@ There are no accounts, no telemetry and no cloud of ours. If you want the same h
 - **Run several sessions per host.** Name them, close them, and get them back with their scrollback after a restart.
 - **Organise with groups.** Collapsible, drag-and-drop, synced with your hosts.
 - **Sync on your own server.** An optional Rust server holds the encrypted vault. Conflicts keep a copy instead of overwriting.
-- **Let AI agents work on your servers.** Off by default. Agents like Claude Code use real sessions you can watch, pause and stop, only on hosts you allow.
+- **Let AI agents work on your servers.** Off by default. Agents like Claude Code, Codex or OpenCode use real sessions you can watch, pause and stop, only on hosts you allow.
 - **Stay out of the way.** Lives in the Dock and menu bar, honours Reduce Motion, and updates itself with a checksum check.
 
 ## Install

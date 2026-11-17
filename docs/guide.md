@@ -97,13 +97,57 @@ Deployment (reverse-proxy TLS, systemd, Docker, `--create-secret` for servers re
 
 ## Agents (MCP)
 
-Maine can let AI agents such as Claude Code or Claude Desktop work on your servers through real sessions you can watch. It is off until you enable it in **Settings → Agents**:
+Maine can let AI agents such as Claude Code, Codex, OpenCode or Claude Desktop work on your servers through real sessions you can watch. It is off until you enable it in **Settings → Agents**:
 
 1. Switch on **Allow agent access**.
-2. **Add Client…**, name it, and copy the setup it shows once. For Claude Code that is a command like `claude mcp add maine --env MAINE_AGENT_TOKEN=… -- "/Applications/Maine.app/Contents/MacOS/Maine" --mcp`; for Claude Desktop it is JSON for `claude_desktop_config.json`.
+2. **Add Client…**, name it, and copy the setup it shows once. For Claude Code that is a command like `claude mcp add maine --env MAINE_AGENT_TOKEN=… -- "/Applications/Maine.app/Contents/MacOS/Maine" --mcp`; Codex and OpenCode get the same command with `codex` or `opencode` in front (see *Codex and OpenCode* below); for Claude Desktop it is JSON for `claude_desktop_config.json`.
 3. Tick the groups and hosts agents may use. Everything else is invisible to them.
 
 Agents can list allowed hosts and their own sessions, open sessions, run commands (getting output and exit code), read output and the screen, send keys, ask Maine to type a saved password into a prompt, and close their sessions. `type_password` fires only when the last screen line is a password prompt (sudo, ssh, su). Maine types the password plus Return, never returns it, and masks it in later output.
+
+**Codex and OpenCode**
+
+Both are plain stdio MCP clients, so the same `Maine --mcp` bridge and client token work. Add a client in Settings → Agents and copy the command for your tool:
+
+```sh
+codex mcp add maine --env MAINE_AGENT_TOKEN=maine-agent-… -- "/Applications/Maine.app/Contents/MacOS/Maine" --mcp
+opencode mcp add maine --env MAINE_AGENT_TOKEN=maine-agent-… -- "/Applications/Maine.app/Contents/MacOS/Maine" --mcp
+```
+
+OpenCode writes to the current project's config; add `--global` to make Maine available in every project. Check with `codex mcp list` or `opencode mcp list`. Maine must be running and unlocked, or every tool call answers "Maine is not running" / "Maine is locked".
+
+**Raise the tool timeout.** `run` can wait up to 600 s, but Codex cuts any tool call at 60 s by default and OpenCode has its own execution timeout, so a long command (`apt upgrade`, a build) fails in the client even though Maine is still running it. The CLIs cannot set this, so edit the config once.
+
+Codex, `~/.codex/config.toml` (or `.codex/config.toml` in a trusted project):
+
+```toml
+[mcp_servers.maine]
+command = "/Applications/Maine.app/Contents/MacOS/Maine"
+args = ["--mcp"]
+tool_timeout_sec = 600
+env_vars = ["MAINE_AGENT_TOKEN"]   # forwarded from your shell; or use the table below
+# [mcp_servers.maine.env]
+# MAINE_AGENT_TOKEN = "maine-agent-…"
+```
+
+OpenCode, `opencode.jsonc` (project or global). `timeout` values are milliseconds:
+
+```jsonc
+{
+  "mcp": {
+    "servers": {
+      "maine": {
+        "type": "local",
+        "command": ["/Applications/Maine.app/Contents/MacOS/Maine", "--mcp"],
+        "environment": { "MAINE_AGENT_TOKEN": "{env:MAINE_AGENT_TOKEN}" },
+        "timeout": { "execution": 600000 }
+      }
+    }
+  }
+}
+```
+
+OpenCode 2.x reads servers from `mcp.servers.<name>`; the older flat `mcp.<name>` shape is deprecated, and the CLI writes whichever shape your version expects. The token is a bearer secret: anything running as you can read it from these files. The `env_vars` / `{env:…}` forms keep it out of the file, at the cost of exporting `MAINE_AGENT_TOKEN` in the shell that starts the tool. Revoke the client in Settings if it leaks.
 
 **What you see and control**
 

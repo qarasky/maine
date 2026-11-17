@@ -15,7 +15,7 @@ struct AgentSettingsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Agents")
                     .font(.system(size: 15, weight: .semibold))
-                Text("Let MCP clients such as Claude Code drive SSH sessions in Maine. Their sessions appear in the sidebar, where you can watch, type, pause or stop them.")
+                Text("Let MCP clients such as Claude Code, Codex or OpenCode drive SSH sessions in Maine. Their sessions appear in the sidebar, where you can watch, type, pause or stop them.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -249,8 +249,15 @@ private struct PairingSheet: View {
             Text("Set up \(pairing.client.name)").font(.headline)
             Text("This token is shown only once. Copy one of these into the client, then close this sheet.")
                 .font(.callout).foregroundStyle(.secondary)
-            snippet("Claude Code (run in Terminal)", pairing.claudeCodeCommand)
-            snippet("Claude Desktop (claude_desktop_config.json)", pairing.desktopJSON)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    snippet("Claude Code (run in Terminal)", pairing.claudeCodeCommand)
+                    snippet("Codex (run in Terminal)", pairing.codexCommand)
+                    snippet("OpenCode (run in Terminal; add --global for every project)", pairing.openCodeCommand)
+                    snippet("Claude Desktop (claude_desktop_config.json)", pairing.desktopJSON)
+                }
+            }
+            .frame(maxHeight: 460)
             HStack {
                 Spacer()
                 Button("Done", action: onDone).keyboardShortcut(.defaultAction)

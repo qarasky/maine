@@ -10,7 +10,7 @@ objects (`list_hosts` → `{hosts: [...]}`), not bare arrays.
 
 ## Intent
 
-Let an AI agent (Claude Code, Claude Desktop, or any MCP client) work on a
+Let an AI agent (Claude Code, Codex, OpenCode, Claude Desktop, or any MCP client) work on a
 user's servers *through Maine*, in real sessions the user can watch and take
 over, instead of firing one-off `ssh host cmd` calls nobody sees.
 
@@ -127,7 +127,10 @@ attributable per client*.
       "/Applications/Maine.app/Contents/MacOS/Maine" --mcp
   ```
 
-  and the equivalent JSON for Claude Desktop (path = the running app's
+  the same line with `codex` or `opencode` instead of `claude` (all three CLIs
+  take `mcp add NAME --env K=V -- COMMAND ARGS`; `docs/guide.md` covers their
+  config files and why to raise the client's tool timeout, since `run` may wait
+  up to 600 s and Codex's default is 60 s), and the equivalent JSON for Claude Desktop (path = the running app's
   `Bundle.main.executableURL`):
 
   ```json
@@ -354,8 +357,8 @@ After typing:
     by agents, including typing their saved passwords into password prompts.
     Any program running as you can read a client's configuration and reuse
     its token.*
-  * **Clients:** add (name, then the one-time token with the Claude Code
-    command and Claude Desktop JSON, each with a Copy button) and revoke.
+  * **Clients:** add (name, then the one-time token with the Claude Code,
+    Codex and OpenCode commands and Claude Desktop JSON, each with a Copy button) and revoke.
   * **Access:** a checkbox per group and per host. A host inside an allowed
     group is shown checked and disabled, because the group already covers it.
   * **Activity:** the latest 100 entries from the encrypted record, with a

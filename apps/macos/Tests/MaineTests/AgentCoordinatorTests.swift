@@ -119,6 +119,11 @@ struct AgentCoordinatorTests {
         #expect(pairing.claudeCodeCommand.hasPrefix("claude mcp add maine --env MAINE_AGENT_TOKEN=maine-agent-"))
         #expect(pairing.claudeCodeCommand.hasSuffix(" --mcp"))
         #expect(pairing.claudeCodeCommand.contains(pairing.token))
+        let executable = Bundle.main.executableURL?.path ?? CommandLine.arguments[0]
+        let tail = " --env MAINE_AGENT_TOKEN=\(pairing.token) -- \"\(executable)\" --mcp"
+        #expect(pairing.codexCommand == "codex mcp add maine" + tail)
+        #expect(pairing.openCodeCommand == "opencode mcp add maine" + tail)
+        #expect(pairing.claudeCodeCommand == "claude mcp add maine" + tail)
         let desktop = try JSONDecoder().decode(JSONValue.self, from: Data(pairing.desktopJSON.utf8))
         #expect(desktop["mcpServers"]?["maine"]?.array("args") == ["--mcp"])
         #expect(desktop["mcpServers"]?["maine"]?["env"]?.string("MAINE_AGENT_TOKEN") == pairing.token)
