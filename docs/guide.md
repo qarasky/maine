@@ -177,3 +177,15 @@ For a disappearing window or terminal:
 4. Choose **Debug → Show Debug Logs**. Logs are local JSON-lines files at `~/Library/Logs/Maine/debug.jsonl`, plus one rotated `debug.previous.jsonl`. Keep both when reporting, and disable logging afterwards.
 
 Disconnect captures the window/view tree before termination and again after 100 ms, 500 ms and 2 s. Logs do **not** capture passwords, hostnames, usernames, commands, environment variables, terminal contents, keystrokes or screenshots. They do include host and session UUIDs and the app executable path. Files are `0600`, about 5 MB each for current and previous. Nothing is uploaded. Logging also works in release builds; run `apps/macos/build/Maine.app/Contents/MacOS/Maine --debug` to see native runtime warnings too.
+
+## Linux
+
+The Linux client is built from source (`apps/linux/scripts/install.sh`) and installs to `~/.local`. It opens the same `passwords.maine` as the other clients, so copy that file (and use the same master password) to bring your hosts over. Data lives in `~/.local/share/maine/`.
+
+* **Unlock** with the master password on every launch. **Ctrl+L** locks; live sessions stay connected.
+* **Hosts and groups** are in the sidebar. Click a host to connect (or reveal its session); right-click for new session, edit, duplicate, copy credentials, move, delete. Drag hosts and groups to reorder. **Ctrl+N** adds a host, **Ctrl+F** searches.
+* **Terminal:** Ctrl+Shift+C / Ctrl+Shift+V copy and paste, middle click pastes the selection, Shift+PageUp/Down scrolls, Ctrl+Shift+Plus/Minus changes the font size.
+* **Closing the window** keeps Maine running in the tray; **Quit** from the tray or the sidebar menu ends it. Sessions are saved on quit and come back on the next unlock.
+* **Saved passwords** are typed for password prompts only. Passphrases, MFA codes and host-key trust always ask you.
+* **Sync** (sidebar menu, Settings, Sync): create a slot on your own server or join one with a token. Tokens are kept in the system keyring (KWallet or GNOME Keyring); without one, the rest of Maine still works but sync cannot store its token.
+* **Agents** (Settings, Agents): off by default. Pair a client to get a `claude mcp add ...` command or a JSON snippet, allow hosts or groups, and watch agent sessions in the sidebar (they carry an AGENT badge). Pause, Stop and Keep are in the session header; right-click your own session to hand it to an agent.

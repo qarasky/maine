@@ -28,6 +28,41 @@ Not implemented on macOS:
   versions, so a pruned version has no recovery flow in the app;
 - several profiles syncing at once (deliberately, see Workspaces).
 
+## Status on Linux
+
+`apps/linux/crates/maine-sync` (Rust, no Qt) is a port of the macOS client. It
+implements everything in "Status on macOS" except the UI, which belongs to the
+Linux app:
+
+- `profile`: profiles as `sync-profiles.json` (atomic, `0600`, no tokens) and
+  the `TokenStore` trait the app backs with the Secret Service; one active
+  profile; parked workspace files `passwords.workspace-<PROFILE-ID>.maine`.
+- `transport`: the whole protocol behind a `Transport` trait, including the
+  versions endpoints the macOS client never calls, and `HttpTransport`
+  (blocking `ureq` with rustls, `User-Agent: Maine-Sync`, 10 s / 30 s
+  timeouts, no redirects at all, nothing logged).
+- `engine`: create, join, pull, push, rotate and delete exactly as above, byte
+  for byte, with `passwords.conflict-`, `passwords.remote-` and
+  `passwords.pre-sync-` copies that are never overwritten (a name taken in the
+  same second gets a `-2` suffix). Timestamps in copy names are UTC.
+- `coordinator`: a thread-free state machine with an injected clock (pull on
+  unlock, 2 s debounce, 30 s `HEAD` poll with 30 s / 2 min / 5 min backoff,
+  best-effort push on lock, bounded flush on quit, foreground pull) plus the
+  pairing and workspace operations; `runner` wraps it in one thread behind
+  `SyncHandle`. The app implements `VaultHost`.
+- Tests: the macOS engine and profile tests, a coordinator suite and an
+  integration suite (`tests/server.rs`) against the real server. Set
+  `MAINE_SYNC_SERVER_BIN`, or build `apps/sync-server` in release mode, to run
+  it; without a binary it prints a note and passes.
+
+Deliberate differences from macOS: a polling loop also starts after Create,
+Join and the empty-slot push (macOS only starts it at unlock); the poll is not
+restarted after a failure that needs the user (rejected token, refused vault);
+`HEAD` polls leave the status alone unless a download follows; Join stores the
+token before any file moves and rolls the profile back if the switch fails;
+Create deletes the new slot again if its token cannot be stored; an unreadable
+`sync-profiles.json` is kept as `sync-profiles.json.corrupt-<timestamp>`.
+
 ## Ground rules
 
 1. **The synced object is the vault file, byte for byte.** Clients never

@@ -8,6 +8,40 @@ Implementation notes: every session uses `CapturingTerminalView` (SwiftTerm's
 per session after login settles or before the first command; results are JSON
 objects (`list_hosts` → `{hosts: [...]}`), not bare arrays.
 
+## Status on Linux
+
+The Linux client implements the same surface in the UI-free Rust crate
+`apps/linux/crates/maine-agents` (`cargo test -p maine-agents` from
+`apps/linux`). Tool names, JSON schemas, result shapes, the frame format, the
+token format and the JSON of the access rules and activity entries are the
+macOS ones, so an MCP client behaves identically against either, and a sealed
+local state file stays readable by both. What differs:
+
+* **Paths.** The socket is `$XDG_RUNTIME_DIR/maine/agent.sock` (0600, in a 0700
+  directory that must belong to the user; `MAINE_AGENT_SOCKET` overrides it;
+  without `XDG_RUNTIME_DIR` it falls back to `<tmp>/maine-<uid>/agent.sock`).
+  The peer is checked with `SO_PEERCRED` instead of `getpeereid`. The bridge is
+  `maine --mcp`, calling `run_bridge_from_env()`.
+* **Tokens.** Client tokens are stored (SHA-256 only) behind a `SecretStore`;
+  the app backs it with the Secret Service, service `Maine Agents`, key = the
+  client's UUID. If no secret service is available, pairing is unavailable.
+* **The app side is an interface.** The crate drives sessions through
+  `AgentSession` (an adapter for `maine_term::TermSession` is included) and
+  reaches the app's host list, rules, passwords, sessions and activity log
+  through `AgentHost`. Time goes through an injected `Clock`, so the driver's
+  waits are testable without sleeping.
+* **Shells that print `PS2` after the echo** (dash, ash) put `> ` in front of a
+  command's first output line, because they echo the two-line wrapper before
+  they print their continuation prompt. `run` removes exactly as many `> `
+  prefixes as the wrapper has continuation lines, and only when the echoed
+  wrapper shows the raw typed text. `read_screen` shows the screen as it is.
+* **Tests.** The Swift suites are ported (output, completion, OSC 133,
+  protocol, tokens, access, activity entries, driver, tools, server, bridge,
+  coordinator) and run headless. End-to-end tests drive the real bridge over a
+  real socket and server into a real PTY running `/bin/sh` or bash. The
+  rejection of another user's process by the uid check cannot be tested without
+  a second account.
+
 ## Intent
 
 Let an AI agent (Claude Code, Codex, OpenCode, Claude Desktop, or any MCP client) work on a

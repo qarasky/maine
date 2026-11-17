@@ -4,13 +4,14 @@ Instructions for AI coding agents working in this repository. Humans use `README
 
 ## What this is
 
-Maine is a local-first SSH client for macOS (Swift 6, SwiftUI, macOS 14+) and Android (Kotlin, Compose, SDK 28+). Swift package at `apps/macos` with one dependency (SwiftTerm); Gradle project at `apps/android` (sshj for SSH, Compose for UI, and a vendored Termux terminal module for emulation); Rust crate at `apps/sync-server` for optional sync. Sync is self-hosted: no accounts, no cloud service, no telemetry. Shared cross-client contract lives in `packages/schema`, not shared code — except the vault envelope, which every client implements byte-for-byte so the file is portable.
+Maine is a local-first SSH client for macOS (Swift 6, SwiftUI, macOS 14+), Android (Kotlin, Compose, SDK 28+) and Linux (Rust, Qt 6 / QML, KDE Plasma on Wayland first). Swift package at `apps/macos` with one dependency (SwiftTerm); Gradle project at `apps/android` (sshj for SSH, Compose for UI, and a vendored Termux terminal module for emulation); Rust crate at `apps/sync-server` for optional sync; Cargo workspace at `apps/linux` for the Linux client. Sync is self-hosted: no accounts, no cloud service, no telemetry. Shared cross-client contract lives in `packages/schema`, not shared code — except the vault envelope, which every client implements byte-for-byte so the file is portable.
 
 ```
 maine/
 ├── apps/macos/     The app: Sources/Maine, Tests/MaineTests, scripts/, Resources/
 ├── apps/android/   Kotlin + Compose client: app/src/{main,test}, terminal/, tools/, README.md
 ├── apps/sync-server/ Rust sync server: src/, tests/, scripts/smoke.sh, README.md
+├── apps/linux/     Linux client: Cargo workspace (maine-core, maine-term, maine-engine, maine-sync, maine-agents, maine-app), packaging/, scripts/
 ├── packages/schema/ Versioned JSON config format + Python validator
 ├── docs/           guide.md, development.md, architecture.md, macos-design.md, mcp.md, releasing.md, sync-protocol.md, sync-client.md, images/
 └── README.md
@@ -44,6 +45,18 @@ Run Android commands from `apps/android` (JDK 17+, Android SDK with platform 36;
 ./gradlew :app:testDebugUnitTest              # JVM unit tests (49 tests)
 ./gradlew :app:assembleDebug                  # debug APK
 swift tools/make-golden-vault.swift <password> app/src/test/resources/vault-golden-v2.json
+```
+
+Run Linux commands from `apps/linux` (stable Rust; Qt 6 dev packages only for `maine-app`, see `docs/development.md`):
+
+```sh
+cargo test -p maine-core -p maine-term -p maine-engine   # Qt-free core: no windows, no desktop session
+cargo test --workspace                                    # also builds the Qt app (needs Qt 6 dev packages)
+cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --check
+scripts/install.sh                                        # release build into ~/.local
+MAINE_DATA_DIR=/tmp/maine-dev MAINE_DEBUG_SHELL='echo hi; exec sleep 600' \
+  QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Fusion \
+  cargo run -p maine-app -- --demo --shot=/tmp/maine.png   # headless UI screenshot, no window on your screen
 ```
 
 Run sync-server commands from `apps/sync-server` (any recent stable Rust; no other system dependencies):
@@ -82,6 +95,17 @@ Android (`apps/android`, Kotlin + Compose, minSdk 28):
 | Terminal | `terminal/` (vendored Termux, Apache-2.0), `session/SshTerminal.kt`, `ui/TerminalSurface.kt`, `ui/ExtraKeysRow.kt` | Real VT/xterm emulator; SSH bytes drive it through a `Transport` instead of a PTY; the view is the input surface, with an on-screen ESC/CTRL/ALT/TAB/arrow row |
 | Tests | `app/src/test/` | Validation, format refusal, ssh args, config reader, vault roundtrip + Swift-generated golden fixture |
 
+Linux (`apps/linux`, Rust workspace, Qt 6 / QML via cxx-qt; design in `docs/superpowers/specs/2026-11-17-linux-client-design.md`):
+
+| Area | Files | Role |
+| --- | --- | --- |
+| Core | `crates/maine-core` (`vault/`, `model/`, `ssh/`) | Qt-free: vault v2 (byte-compatible with macOS, proven by `tests/golden.rs`), device-local sealed state (`sessions-<id>.maine`), host/group/layout model, `SshTarget`, read-only `~/.ssh/config` |
+| Terminal | `crates/maine-term` | Headless PTY (`portable-pty`) + `alacritty_terminal` emulator: cell snapshots, selection, scrollback text, raw-byte tap for agents, key/mouse encoding |
+| Engine | `crates/maine-engine` | Lock/unlock, host store, `SessionManager` (UUID-keyed sessions, close vs quit, restore), askpass broker + socket (`--askpass` helper, single-instance "show"), JSON views for QML |
+| Sync | `crates/maine-sync` | Whole-file sync client (profiles, engine, HTTP transport, coordinator) |
+| Agents | `crates/maine-agents` | MCP agent access: output buffer, OSC 133, driver, tools, socket server, stdio bridge |
+| App | `crates/maine-app` (`src/bridge.rs`, `src/ffi.rs`, `cpp/terminal_item.*`, `qml/`) | cxx-qt `AppController`, C++ `TerminalItem` over a C ABI into `maine-term`, QML sidebar/editor/dialogs, StatusNotifier tray (`ksni`) |
+
 Sync server (`apps/sync-server`, Rust + axum + embedded SQLite):
 
 | Area | Files | Role |
@@ -115,4 +139,5 @@ Sync server (`apps/sync-server`, Rust + axum + embedded SQLite):
 - **Docs travel with behavior.** `README.md` is a short overview; user-facing detail lives in `docs/guide.md` and build/test detail in `docs/development.md`. Update those and `docs/architecture.md` (plus `docs/macos-design.md` for layout changes and `docs/mcp.md` for agent behavior) in the same change.
 - **Icons are scripted.** `scripts/render-mark.swift` generates the active M monogram; `render-icon.swift` (prompt mark) is kept for future use. Rebuild `.icns` with `sips` + `iconutil` per the script headers; never commit ad-hoc binaries outside `Resources/`.
 - **Git hygiene.** `build/` and `.build/` are ignored — never force-add them. Commit only when asked; never push unless asked.
-- **Ask before expanding scope.** Pre-written commands, key management, hosted sync/accounts and new platforms are explicitly on hold / not planned. The self-hosted sync server, the macOS sync client and MCP agent access (all three phases of `docs/mcp.md`) exist; Android sync is planned but not started.
+- **Ask before expanding scope.** Pre-written commands, key management, hosted sync/accounts and platforms beyond macOS, Android and Linux are explicitly on hold / not planned. The self-hosted sync server, the macOS sync client and MCP agent access (all three phases of `docs/mcp.md`) exist; Android sync is planned but not started.
+- **Linux notes on the invariants.** All of them apply on Linux except: 7 (ad-hoc signing) and 13 (updater) are macOS-only, since the Linux client is built from source and makes no automatic network call besides sync; 6 reads "no tab bar, no toolbar, no All Hosts page" because KWin draws the title bar; the vault key is never persisted anywhere (askpass asks the running app over a 0600 socket), and 9 follows the desktop's reduced-motion setting.

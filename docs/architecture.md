@@ -1,14 +1,13 @@
 # Architecture
 
-Maine is a monorepo with two clients so far: macOS (shipped) and Android (in
-progress). This document explains how the macOS app is put together, which
+Maine is a monorepo with three clients: macOS (shipped), Android (in
+progress) and Linux (Rust + Qt, built from source). This document explains how the macOS app is put together, which
 decisions are load-bearing, and how the Android client maps them. The Android
 layout is documented in [`apps/android/README.md`](../apps/android/README.md).
 
 ## Why a monorepo
 
-The stated future is three clients — macOS now, Android in progress, Linux
-later.
+The clients are macOS, Android and Linux.
 What those clients share is not code, it is **one file format**: the saved host
 list. So the repository splits along that line:
 
@@ -16,6 +15,7 @@ list. So the repository splits along that line:
 maine/
 ├── apps/macos/          the macOS client: Swift, SwiftUI, AppKit
 ├── apps/android/        the Android client: Kotlin, Compose, sshj
+├── apps/linux/          the Linux client: Rust workspace, Qt 6 / QML
 ├── apps/sync-server/    the sync server: Rust, axum, embedded SQLite
 ├── packages/schema/     the shared, language-neutral configuration format
 ├── docs/                this document, the agent and sync documents
@@ -28,8 +28,6 @@ dependency. That is deliberate: a shared Swift package would be useless to an
 Android client, and a shared code layer would need a build system that spans four
 toolchains. The format is the contract.
 
-`apps/linux` is not created yet. An empty placeholder would suggest
-progress that does not exist.
 
 ### The vault across clients
 
@@ -576,3 +574,33 @@ when `MAINE_UI_TESTS=1`.
   records what happened.
 * Sync requires a server the user runs; there is no hosted option. The macOS
   client implements the protocol; Android does not yet.
+
+## The Linux client
+
+`apps/linux` is a Cargo workspace. The design is in
+[`superpowers/specs/2026-11-17-linux-client-design.md`](superpowers/specs/2026-11-17-linux-client-design.md);
+the terminal spike result is in [`superpowers/notes/`](superpowers/notes/2026-11-17-linux-spike-result.md).
+
+```
+QML (Sidebar, HostEditor, dialogs)
+   └── AppController (cxx-qt QObject, src/bridge.rs)   thin: every call locks the engine
+        └── maine-engine::Engine                       lock state, host store, sessions, askpass broker
+             ├── maine-core                            vault, model, ssh target, ssh config (no Qt)
+             └── maine-term::TermSession               PTY + alacritty_terminal, one per session
+QML TerminalItem (C++, cpp/terminal_item.*) ──C ABI (src/ffi.rs)──> maine-term
+```
+
+Decisions that differ from macOS on purpose:
+
+* **Views only attach.** A `TerminalItem` shows an engine-owned session by UUID; the
+  process, emulator and scrollback live in the engine, so recreating a view never
+  restarts or loses a terminal.
+* **The vault key is never persisted.** `ssh` runs `maine` as `SSH_ASKPASS`
+  (`MAINE_SSH_ASKPASS=1`, host id in the environment); the helper asks the running app over
+  `$XDG_RUNTIME_DIR/maine/askpass.sock` (0600, same-uid check) and the app answers from the
+  unlocked vault or with a dialog. A locked vault fails closed.
+* **Paths** follow XDG: `~/.local/share/maine/passwords.maine` (0600, directory 0700),
+  sockets under `$XDG_RUNTIME_DIR/maine/`.
+* **Resident.** A StatusNotifier tray icon (`ksni`) brings the window back; with no tray
+  host available, closing the window quits instead of hiding it.
+* **Single instance.** A second launch asks the first to show its window over the same socket.

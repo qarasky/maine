@@ -92,6 +92,7 @@ maine/
 ├── apps/
 │   ├── macos/         Swift + SwiftUI app
 │   ├── android/       Kotlin + Compose app (vault parity, real terminal; in progress)
+│   ├── linux/         Rust + Qt 6/QML app (Cargo workspace)
 │   └── sync-server/   Rust sync server
 ├── packages/schema/   Versioned JSON config format + validator
 └── docs/              Guide, development, architecture, protocols, design, releasing
@@ -99,7 +100,7 @@ maine/
 
 ## Status
 
-macOS is the first and main client. Sync, MCP agent access and DMG releases with self-update are done. Android has vault parity, host editing and a real terminal; Android sync and a Linux client are not started. Accounts, a hosted service and key management are not planned. The full table is in [docs/development.md](docs/development.md#status).
+macOS is the first and main client. Sync, MCP agent access and DMG releases with self-update are done. Android has vault parity, host editing and a real terminal; Android sync is not started. The Linux client (Rust + Qt 6, built from source) has the vault, hosts and groups, real terminal sessions, saved-password askpass, session restore, a tray icon, sync and MCP agent access. Accounts, a hosted service and key management are not planned. The full table is in [docs/development.md](docs/development.md#status).
 
 ## License
 
