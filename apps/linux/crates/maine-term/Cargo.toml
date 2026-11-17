@@ -1,0 +1,10 @@
+[package]
+name = "maine-term"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "Headless terminal session for Maine: PTY + alacritty_terminal emulator, snapshots, input encoding. No Qt."
+
+[dependencies]
+alacritty_terminal = "0.26"
+portable-pty = "0.9"

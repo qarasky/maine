@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+publish = false
+
+# Key derivation runs 600,000 PBKDF2 rounds; keep tests fast in debug builds.
+[profile.dev.package."*"]
+opt-level = 3

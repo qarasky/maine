@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Maine
+GenericName=SSH Client
+Comment=Local-first SSH client with an encrypted vault
+Exec=maine
+Icon=maine
+Terminal=false
+Categories=Network;RemoteAccess;System;TerminalEmulator;
+Keywords=ssh;terminal;vault;
+StartupNotify=false

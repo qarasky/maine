@@ -1,0 +1,30 @@
+[package]
+name = "maine-app"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "The Maine Linux GUI: Qt 6 / QML via cxx-qt, with a C++ terminal item over maine-term."
+default-run = "maine"
+
+[[bin]]
+name = "maine"
+path = "src/main.rs"
+
+[dependencies]
+maine-core = { path = "../maine-core" }
+maine-term = { path = "../maine-term" }
+maine-engine = { path = "../maine-engine" }
+maine-sync = { path = "../maine-sync" }
+maine-agents = { path = "../maine-agents" }
+zeroize = "1"
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+cxx = "1"
+cxx-qt = "0.10"
+cxx-qt-lib = { version = "0.10", features = ["full"] }
+ksni = { version = "0.3", features = ["blocking"] }
+oo7 = { version = "0.7.1", default-features = false, features = ["tokio", "native_crypto"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread"] }
+
+[build-dependencies]
+cxx-qt-build = "0.10"

@@ -1,0 +1,20 @@
+[package]
+name = "maine-agents"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "MCP agent access for the Maine Linux client: output cleaning, command completion, session driver, socket server, tools and the stdio bridge. No Qt."
+
+[dependencies]
+maine-core = { path = "../maine-core" }
+maine-term = { path = "../maine-term" }
+rand = "0.8"
+rustix = { version = "1", features = ["net", "process"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4", "serde"] }
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"
